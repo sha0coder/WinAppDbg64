@@ -13,6 +13,9 @@
 #include <windows.h>
 #include <tlhelp32.h>
 #include <winternl.h>
+#include <dbghelp.h>
+#include <shlobj.h>
+#include <winver.h>
 #include <iostream>
 #include <vector>
 
@@ -29,6 +32,38 @@ typedef struct _THREAD_BASIC_INFORMATION {
     KPRIORITY               Priority;
     KPRIORITY               BasePriority;
 } THREAD_BASIC_INFORMATION, *PTHREAD_BASIC_INFORMATION;
+
+//// MSR registers ////
+
+typedef struct _SYSDBG_VIRTUAL {
+    PVOID Address;
+    PVOID Buffer;
+    ULONG Request;
+} SYSDBG_VIRTUAL, *PSYSDBG_VIRTUAL;
+
+typedef enum _DEBUG_CONTROL_CODE {
+    DebugSysGetTraceInformation=1,
+    DebugSysSetInternalBreakpoint, 
+    DebugSysSetSpecialCall,
+    DebugSysClerSpecialCalls,  
+    DebugSysQuerySpecialCalls, 
+    DebugSysBreakpointWithStatus,
+    DebugSysGetVersion,
+    DebugSysReadVirtual = 8, 
+    DebugSysWriteVirtual = 9,
+    DebugSysReadPhysical = 10,
+    DebugSysWritePhysical = 11,
+    DebugSysReadControlSpace=12, 
+    DebugSysWriteControlSpace, 
+    DebugSysReadIoSpace, 
+    DebugSysSysWriteIoSpace,
+    DebugSysReadMsr,
+    DebugSysWriteMsr,
+    DebugSysReadBusData,
+    DebugSysWriteBusData,
+    DebugSysCheckLowMemory, 
+} DEBUG_CONTROL_CODE;
+
 
 
 //// FLAGS ////
@@ -241,10 +276,12 @@ public:
 
 class Module {
 private:
+	int pid;
 	MODULEENTRY32 me;
 	
 public:
-	Module(MODULEENTRY32 me) {
+	Module(int pid, MODULEENTRY32 me) {
+		this->pid = pid;
 		this->me = me;
 	}
 	
@@ -275,8 +312,23 @@ public:
 		return me.szModule;
 	}
 	
+	HANDLE get_handle() {
+		return me.hModule;
+	}
 	
+	DWORD64 load_symbols(HANDLE hProcess, char *pdb_filename) {
+		DWORD64 sym_base;
+		
+		sym_base = SymLoadModuleEx(hProcess, me.hModule, pdb_filename, get_name(),  get_base(), get_size(), NULL, 0);
+		return sym_base;
+	}
 	
+	BOOL is_address_here(DWORD64 address) {
+		DWORD64 base = get_base();
+		if (address >= base && address < base+get_size())
+			return TRUE;
+		return FALSE;
+	}
 };
 
 
@@ -394,7 +446,7 @@ public:
 		
 		do {
 			if (pid == me.th32ProcessID) {
-				Module *m = new Module(me);
+				Module *m = new Module(pid, me);
 				modules.push_back(m);
 			}
 		} while (Module32Next(hndl, &me));
@@ -424,8 +476,229 @@ public:
 		modules.clear();
 	}
 	
+	Module *get_module_by_name(char *module_name) {
+		for (auto m : modules) {
+			if (strcmp(m->get_name(), module_name) == 0) {
+				return m;
+			}
+		}
+		return NULL;
+	}
+	
+};
+
+//// Window ////
+
+class Window {
+protected:
+	HWND hWin;
+public:
+	Window(HWND hWin) {
+		this->hWin = hWin;
+	}
+	
+	
+};
+
+
+//// System ////
+
+class System {
+protected:
+public:
+	System() {
+	}
+	
+	Window *find_window(char *clsname, char *winname) {
+		HWND hWin;
+		
+		hWin = FindWindowA(clsname, winname);
+		Window *win = new Window(hWin);
+		
+		return win;
+	}
+	
+	Window *get_window_at_xy(long x, long y) {
+		HWND hWin;
+		POINT point;
+		
+		point.x = x;
+		point.y = y;
+		hWin = WindowFromPoint(point);
+		Window *win = new Window(hWin);
+		
+		return win;
+	}
+	
+	Window *get_foreground_window() {
+		HWND hWin;
+		
+		hWin = GetForegroundWindow();
+		Window *win = new Window(hWin);
+		
+		return win;
+	}
+	
+	Window *get_desktop_window() {
+		HWND hWin;
+		
+		hWin = GetDesktopWindow();
+		Window *win = new Window(hWin);
+		
+		return win;
+	}
+	
+	Window *get_shell_window() {
+		HWND hWin;
+		
+		hWin = GetShellWindow();
+		Window *win = new Window(hWin);
+		
+		return win;
+	}
+	
+	get_top_level_windows(WNDENUMPROC callback) {
+		EnumWindows(callback, 0);
+	}
+	
+	BOOL adjust_privileges(TOKEN_PRIVILEGES new_state) {
+		HANDLE token;
+		
+		if (OpenProcessToken(GetCurrentProcess(), TOKEN_ADJUST_PRIVILEGES, &token)) {
+			AdjustTokenPrivileges(token, FALSE, &new_state, sizeof(new_state), NULL, NULL);
+			CloseHandle(token);
+			return TRUE;
+		}
+		return FALSE;
+	}
+	
+	BOOL is_admin() {
+		return IsUserAnAdmin();
+	}
+	
+	BOOL set_kill_on_exit_mode(BOOL mode) {
+		// won't work before calling CreateProcess or DebugActiveProcess
+		try {
+			DebugSetProcessKillOnExit(mode);
+		} catch(...) {
+			return FALSE;	
+		}
+		return TRUE;
+	}
+	
+	char *read_msr(PVOID address) {
+		typedef LONG (NTAPI *NtSystemDebugControl) (int,void*,DWORD,void*,DWORD,DWORD*);
+		NtSystemDebugControl ntSystemDebugControl;
+		SYSDBG_VIRTUAL mem;
+		
+		mem.Address = address;
+		mem.Buffer = 0;
+		
+		ntSystemDebugControl = (NtSystemDebugControl)GetProcAddress(LoadLibrary("ntdll"),"NtSystemDebugControl");
+		ntSystemDebugControl(DebugSysReadMsr, &mem, sizeof(mem), &mem, sizeof(mem), NULL);
+		
+		return (char *)mem.Buffer;
+	}
+	
+	void write_msr(void *address, void *buffer) {
+		typedef LONG (NTAPI *NtSystemDebugControl) (int,void*,DWORD,void*,DWORD,DWORD*);
+		NtSystemDebugControl ntSystemDebugControl;
+		SYSDBG_VIRTUAL mem;
+		
+		mem.Address = address;
+		mem.Buffer = buffer;
+		
+		ntSystemDebugControl = (NtSystemDebugControl)GetProcAddress(LoadLibrary("ntdll"),"NtSystemDebugControl");
+		ntSystemDebugControl(DebugSysReadMsr, &mem, sizeof(mem), &mem, sizeof(mem), NULL);
+	}
+	
+	DWORD reg_read_dword(HKEY hKeyParent, char *subkey, char *value_name) {
+		HKEY hKey;
+		DWORD data = 0;
+		DWORD len = sizeof(DWORD);
+		
+		if (RegOpenKeyEx(hKeyParent, subkey, 0, KEY_READ, &hKey) == ERROR_SUCCESS) {
+			RegQueryValueEx(hKey, value_name, NULL, NULL, (LPBYTE)(&data), &len);
+			RegCloseKey(hKey);
+		}
+		
+		return data;
+	}
+	
+	void reg_write_dword(HKEY hKeyParent, char *subkey, char *value_name, DWORD value) {
+		HKEY hKey;
+		DWORD data = 0;
+		DWORD len = sizeof(DWORD);
+		
+		if (RegOpenKeyEx(hKeyParent, subkey, 0, KEY_READ, &hKey) == ERROR_SUCCESS) {
+			RegSetValueEx(hKey, value_name, 0, REG_DWORD, reinterpret_cast<BYTE *>(&value), sizeof(DWORD));
+			RegCloseKey(hKey);
+		}
+	}
+	
+	
+	char *reg_read_str(HKEY hKeyParent, char *subkey, char *value_name) {
+		HKEY hKey;
+		DWORD data = 0;
+		DWORD len = sizeof(DWORD);
+		
+		if (RegOpenKeyEx(hKeyParent, subkey, 0, KEY_READ, &hKey) == ERROR_SUCCESS) {
+			RegQueryValueEx(hKey, value_name, NULL, NULL, (LPBYTE)(&data), &len);
+			RegCloseKey(hKey);
+		}
+		
+		return data;
+	}
+	
+	void reg_write_str(HKEY hKeyParent, char *subkey, char *value_name, char *value, ULONG value_len) {
+		HKEY hKey;
+		DWORD data = 0;
+		DWORD len = sizeof(DWORD);
+		
+		if (RegOpenKeyEx(hKeyParent, subkey, 0, KEY_READ, &hKey) == ERROR_SUCCESS) {
+			RegSetValueEx(hKey, value_name, 0, REG_DWORD, reinterpret_cast<BYTE *>(&value), value_len);
+			RegCloseKey(hKey);
+		}
+	}
+	
+	
 	
 	
 	
 	
 };
+
+//// Debug //// 
+
+
+class Debug {
+protected:
+	int pid;
+	System *sys;
+	
+public:
+	Debug() {
+		sys = new System();
+	}
+	
+	Process *attach(int pid) {
+		if (DebugActiveProcess(pid)) {
+			Process *p = new Process(pid);
+			p->scan();
+			this->pid = pid;
+			return p;
+		}
+		
+		return NULL;
+	}
+	
+	void detach() {
+		DebugActiveProcessStop(pid);
+	}
+	
+	void exec(char *file_name, char **args) {
+		//system->start_process(file_name, args);
+	}
+	
+};
+
