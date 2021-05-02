@@ -248,7 +248,11 @@ public:
 		this->me = me;
 	}
 	
-	BYTE* get_base() {
+	DWORD64 get_base() {
+		return (DWORD64)me.modBaseAddr;
+	}
+	
+	BYTE* get_ptr() {
 		return me.modBaseAddr;
 	}
 	
@@ -308,6 +312,10 @@ public:
 	
 	vector<Thread *> get_threads() {
 		return threads;
+	}
+	
+	vector<Module *> get_modules() {
+		return modules;
 	}
 	
 	HANDLE get_handle() {
@@ -372,12 +380,14 @@ public:
 		
 		hndl = CreateToolhelp32Snapshot(TH32CS_SNAPMODULE, pid);
 		if (hndl == INVALID_HANDLE_VALUE) {
-			cout << "error: cant open modules handle\n" << endl;
+			cout << "error: cant open modules handle" << endl;
 			return;
 		}
 		
+		me.dwSize = sizeof(me);
+		
 		if (!Module32First(hndl, &me)) {
-			cout << "Cannot locate any thread.\n" << endl;
+			cout << "Cannot locate any module." << GetLastError() << endl;
 			CloseHandle(hndl);
 			return;
 		}
@@ -389,6 +399,7 @@ public:
 			}
 		} while (Module32Next(hndl, &me));
 		
+		CloseHandle(hndl);
 	}
 	
 	BOOL is_debugged() {
