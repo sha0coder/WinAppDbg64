@@ -341,11 +341,13 @@ protected:
 	HANDLE hProc = 0;
 	vector<Thread *> threads;
 	vector<Module *> modules;
+	PROCESSENTRY32 entry;
 	
 public:
 	Process(int pid) {
 		this->pid = pid;
 		hProc = OpenProcess(PROCESS_ALL_ACCESS, FALSE, pid);
+		calc_entry();
 	}
 	
 	~Process() {
@@ -356,6 +358,35 @@ public:
 		threads.clear();
 		modules.clear();
 		CloseHandle(hProc);
+	}
+	
+	void calc_entry() {
+		HANDLE hSnapshot;
+		PROCESSENTRY32 pe32;
+		 
+		hSnapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+    	if (hSnapshot) {
+	        pe32.dwSize = sizeof(PROCESSENTRY32);
+	        if(Process32First(hSnapshot, &pe32)) {
+	            do {
+	            	
+	            	if (pe32.th32ProcessID == this->pid) {
+	            		this->entry = pe32;
+					}
+
+	            } while(Process32Next(hSnapshot, &pe32));
+	         }
+	         CloseHandle(hSnapshot);
+	    }
+	}
+	
+	string get_name() {
+		string str(entry.szExeFile);
+		return str;
+	}
+	
+	int get_ppid() {
+		this->entry.th32ParentProcessID;
 	}
 	
 	int get_pid() {
@@ -500,13 +531,172 @@ public:
 	
 };
 
+//// Service ////
+
+class Service {
+protected:
+	ENUM_SERVICE_STATUS_PROCESS stat;
+	
+public:
+	Service(ENUM_SERVICE_STATUS_PROCESS stat) {
+		this->stat = stat;
+	}
+	
+	ENUM_SERVICE_STATUS_PROCESS get_stat() {
+		return stat;
+	}
+	
+	string get_name() {
+		string str(stat.lpServiceName);
+		return str;
+	}
+	
+	char *get_display_name() {
+		return stat.lpDisplayName;
+	}
+	
+	DWORD get_exit_code() {
+		return stat.ServiceStatusProcess.dwWin32ExitCode;
+	}
+	
+	int get_pid() {
+		return stat.ServiceStatusProcess.dwProcessId;
+	}
+	
+	SC_HANDLE open_scm(DWORD access) {
+		return OpenSCManagerA(NULL, NULL, access);
+	}
+	
+	SC_HANDLE open_service(SC_HANDLE scm, DWORD access) {
+		return OpenServiceA(scm, stat.lpServiceName, access);
+	}
+	
+	void change_description(string description) {
+		SC_HANDLE scm;
+		SC_HANDLE hService;
+		SERVICE_DESCRIPTION sd;
+		
+		sd.lpDescription = (LPSTR)description.c_str();
+		
+		scm = open_scm(SC_MANAGER_ALL_ACCESS);
+		if (scm) {
+			hService = open_service(scm, SERVICE_CHANGE_CONFIG);
+			if (hService) {
+				
+				ChangeServiceConfig2W(hService, SERVICE_CONFIG_DESCRIPTION, &sd);
+				
+				CloseServiceHandle(hService);
+			}	
+			CloseServiceHandle(scm);
+		}
+	}
+	
+	DWORD get_current_state() {
+		return stat.ServiceStatusProcess.dwCurrentState;
+	}
+	
+	BOOL is_running() {
+		if (stat.ServiceStatusProcess.dwCurrentState == SERVICE_RUNNING)
+			return TRUE;
+		return FALSE;		
+	}
+	
+	BOOL is_paused() {
+		if (stat.ServiceStatusProcess.dwCurrentState == SERVICE_PAUSED)
+			return TRUE;
+		return FALSE;		
+	}
+	
+	BOOL is_stopped() {
+		if (stat.ServiceStatusProcess.dwCurrentState == SERVICE_STOPPED)
+			return TRUE;
+		return FALSE;		
+	}
+	
+	void start() {
+		SC_HANDLE scm;
+		SC_HANDLE hService;
+		
+		scm = open_scm(SC_MANAGER_ALL_ACCESS);
+		if (scm) {
+			hService = open_service(scm, SERVICE_ALL_ACCESS);
+			if (hService) {
+				StartServiceA(hService, 0, NULL);
+				CloseServiceHandle(hService);
+			}
+			CloseServiceHandle(scm);
+		}
+	}
+	
+	void stop() {
+		SC_HANDLE scm;
+		SC_HANDLE hService;
+		
+		scm = open_scm(SC_MANAGER_ALL_ACCESS);
+		if (scm) {
+			hService = open_service(scm, SERVICE_ALL_ACCESS);
+			if (hService) {
+				ControlService(hService, SERVICE_CONTROL_STOP, NULL);
+				CloseServiceHandle(hService);
+			}
+			CloseServiceHandle(scm);
+		}
+	}
+	
+	void restart() {
+		stop();
+		start();
+	}
+	
+	void pause() {
+		SC_HANDLE scm;
+		SC_HANDLE hService;
+		
+		scm = open_scm(SC_MANAGER_ALL_ACCESS);
+		if (scm) {
+			hService = open_service(scm, SERVICE_ALL_ACCESS);
+			if (hService) {
+				ControlService(hService, SERVICE_CONTROL_PAUSE, NULL);
+				CloseServiceHandle(hService);
+			}
+			CloseServiceHandle(scm);
+		}
+	}
+	
+	void resume() {
+		SC_HANDLE scm;
+		SC_HANDLE hService;
+		
+		scm = open_scm(SC_MANAGER_ALL_ACCESS);
+		if (scm) {
+			hService = open_service(scm, SERVICE_ALL_ACCESS);
+			if (hService) {
+				ControlService(hService, SERVICE_PAUSE_CONTINUE, NULL);
+				CloseServiceHandle(hService);
+			}
+			CloseServiceHandle(scm);
+		}
+	}
+	
+};
+
 
 //// System ////
 
 class System {
 protected:
+	vector<Service *> services;
+	vector<Process *> processes;
+	
 public:
 	System() {
+	}
+	
+	~System() {
+		for (auto service: services) {
+			delete service;
+		}
+		services.clear();
 	}
 	
 	Window *find_window(char *clsname, char *winname) {
@@ -612,12 +802,12 @@ public:
 		ntSystemDebugControl(DebugSysReadMsr, &mem, sizeof(mem), &mem, sizeof(mem), NULL);
 	}
 	
-	DWORD reg_read_dword(HKEY hKeyParent, char *subkey, char *value_name) {
+	DWORD reg_read_dword(HKEY hKeyParent, string subkey, char *value_name) {
 		HKEY hKey;
 		DWORD data = 0;
 		DWORD len = sizeof(DWORD);
 		
-		if (RegOpenKeyEx(hKeyParent, subkey, 0, KEY_READ, &hKey) == ERROR_SUCCESS) {
+		if (RegOpenKeyEx(hKeyParent, subkey.c_str(), 0, KEY_READ, &hKey) == ERROR_SUCCESS) {
 			RegQueryValueEx(hKey, value_name, NULL, NULL, (LPBYTE)(&data), &len);
 			RegCloseKey(hKey);
 		}
@@ -625,46 +815,190 @@ public:
 		return data;
 	}
 	
-	void reg_write_dword(HKEY hKeyParent, char *subkey, char *value_name, DWORD value) {
-		HKEY hKey;
-		DWORD data = 0;
-		DWORD len = sizeof(DWORD);
+	void reg_write_dword(HKEY hKeyParent, string subkey, string value_name, DWORD value) {
+		HKEY hKey;		
 		
-		if (RegOpenKeyEx(hKeyParent, subkey, 0, KEY_READ, &hKey) == ERROR_SUCCESS) {
-			RegSetValueEx(hKey, value_name, 0, REG_DWORD, reinterpret_cast<BYTE *>(&value), sizeof(DWORD));
+		if (RegOpenKeyEx(hKeyParent, subkey.c_str(), 0, KEY_WRITE, &hKey) == ERROR_SUCCESS) {
+			RegSetValueEx(hKey, value_name.c_str(), 0, REG_DWORD, (BYTE *)&value, sizeof(DWORD));
 			RegCloseKey(hKey);
 		}
 	}
 	
 	
-	char *reg_read_str(HKEY hKeyParent, char *subkey, char *value_name) {
+	ULONG reg_read_str(HKEY hKeyParent, string subkey, string value_name, char *out_str, DWORD len) {
 		HKEY hKey;
-		DWORD data = 0;
-		DWORD len = sizeof(DWORD);
 		
-		if (RegOpenKeyEx(hKeyParent, subkey, 0, KEY_READ, &hKey) == ERROR_SUCCESS) {
-			RegQueryValueEx(hKey, value_name, NULL, NULL, (LPBYTE)(&data), &len);
+		if (RegOpenKeyExA(hKeyParent, subkey.c_str(), 0, KEY_READ, &hKey) == ERROR_SUCCESS) {
+			if (RegQueryValueExA(hKey, value_name.c_str(), NULL, NULL, (LPBYTE)out_str, &len) != ERROR_SUCCESS) {
+				if (GetLastError() == 0)
+					cout << "need permissions." << endl;
+				else
+					cout << "wrong value name " << GetLastError() << endl;
+			}
 			RegCloseKey(hKey);
+		} else {
+			cout << "wrong subkey " << GetLastError() << endl;
 		}
 		
-		return data;
+		return len;
 	}
 	
-	void reg_write_str(HKEY hKeyParent, char *subkey, char *value_name, char *value, ULONG value_len) {
+	void reg_write_str(HKEY hKeyParent, string subkey, string value_name, string value) {
 		HKEY hKey;
-		DWORD data = 0;
-		DWORD len = sizeof(DWORD);
 		
-		if (RegOpenKeyEx(hKeyParent, subkey, 0, KEY_READ, &hKey) == ERROR_SUCCESS) {
-			RegSetValueEx(hKey, value_name, 0, REG_DWORD, reinterpret_cast<BYTE *>(&value), value_len);
+		if (RegOpenKeyExA(hKeyParent, subkey.c_str(), 0, KEY_WRITE, &hKey) == ERROR_SUCCESS) {
+			if (RegSetValueExA(hKey, value_name.c_str(), 0, REG_SZ, (BYTE *)value.c_str(), value.size()) != ERROR_SUCCESS) {
+				if (GetLastError() == 0)
+					cout << "need permissions." << endl;
+				else
+					cout << "wrong value_name " << GetLastError() << endl;
+			}
+
 			RegCloseKey(hKey);
+		} else {
+			cout << "wrong subkey " << GetLastError() << endl;
 		}
 	}
 	
+	void reg_delete_value(HKEY hKeyParent, string subkey, string value_name) {
+		HKEY hKey;
+		if (RegOpenKeyExA(hKeyParent, subkey.c_str(), 0, KEY_ALL_ACCESS, &hKey) == ERROR_SUCCESS) {
+			RegDeleteValueA(hKey, value_name.c_str());
+		} else {
+			cout << "wrong subkey " << GetLastError() << endl;
+		}
+	}
+	
+	char *get_postmortem_debugger() {
+		char *dbg = (char *)malloc(1024);
+		if (dbg == NULL)
+			return NULL;
+		
+		reg_read_str(HKEY_LOCAL_MACHINE, "SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\AeDebug", "Debugger", dbg, 1024);
+		
+		return dbg;
+	}
+	
+	void set_postmortem_debugger(string dbg) {
+		reg_write_str(HKEY_LOCAL_MACHINE, "SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\AeDebug", "Debugger", dbg);
+	}
 	
 	
+	void auto_postmortem() {
+		// dont need a confirmation before launching the debugger.
+		reg_write_str(HKEY_LOCAL_MACHINE, "SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\AeDebug", "Auto", "1");
+	}
 	
+	void noauto_postmortem() {
+		// need a confirmation before launching the debugger.
+		reg_write_str(HKEY_LOCAL_MACHINE, "SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\AeDebug", "Auto", "0");
+	}
 	
+	BOOL is_auto_postmortem() {
+		char automatic[5];
+		
+		reg_read_str(HKEY_LOCAL_MACHINE, "SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\AeDebug", "Auto", (char *)automatic, 5);
+		if (automatic[0] == '1')
+			return TRUE;
+		return FALSE;
+	}
+	
+	void add_exclussion_list(string progname) {
+		reg_write_dword(HKEY_LOCAL_MACHINE, "SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\AeDebug\\AutoExclusionList", progname, 1);
+	}
+	
+	void del_exclussion_list(string progname) {
+		reg_delete_value(HKEY_LOCAL_MACHINE, "SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\AeDebug\\AutoExclusionList", progname); 
+	}
+	
+	vector<Service *> get_services() {
+		return services;
+	}
+	
+	void scan_services() {
+		SC_HANDLE scm;
+		SC_HANDLE hService;
+		void *buff = NULL;
+		DWORD buff_sz = 0;
+		DWORD more_bytes_needed, service_count;
+		
+		scm = OpenSCManagerA(NULL, NULL, SC_MANAGER_ENUMERATE_SERVICE);
+		if (scm) {
+			for (;;) {
+				if (EnumServicesStatusExA(scm, SC_ENUM_PROCESS_INFO, SERVICE_WIN32, SERVICE_STATE_ALL, (LPBYTE)buff, buff_sz, &more_bytes_needed, &service_count, NULL, NULL)) {
+					ENUM_SERVICE_STATUS_PROCESS* services = (ENUM_SERVICE_STATUS_PROCESS*)buff;
+					
+					for (int i = 0; i < service_count; i++) {
+						ENUM_SERVICE_STATUS_PROCESS stat = services[i];
+						Service *service = new Service(stat);
+						this->services.push_back(service);
+					}
+					
+					free(buff);
+					CloseHandle(scm);
+					return;
+				}
+			
+			    if (GetLastError() != ERROR_MORE_DATA) {
+			      free(buff);
+			      return;
+			    }
+			    
+			    buff_sz += more_bytes_needed;
+			    free(buff);
+			    buff = malloc(buff_sz);
+			    CloseHandle(scm);
+			}
+		}
+	}
+	
+	Service *get_service_by_name(string name) {
+		for (Service *service : services) {
+			if (service->get_name() == name) {
+				return service;
+			}
+		}
+		return NULL;
+	}
+	
+	void scan_processes() {
+		HANDLE hSnapshot;
+		PROCESSENTRY32 pe32;
+		
+	    hSnapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+	    if (hSnapshot) {
+	        pe32.dwSize = sizeof(PROCESSENTRY32);
+	        if (Process32First(hSnapshot, &pe32)) {
+	            do {
+	            	Process *process = new Process(pe32.th32ProcessID);	
+	            	processes.push_back(process);
+	            } while(Process32Next(hSnapshot, &pe32));
+	        }
+	        CloseHandle(hSnapshot);
+	    }
+	}
+	
+	Process *get_process_by_name(string process_name) {
+		for (auto process: processes) {
+			if (process->get_name() == process_name) {
+				return process;
+			}
+		}
+		return NULL;
+	}
+	
+	int get_explorer_pid() {
+		scan_processes();
+		auto explorer = get_process_by_name("explorer.exe");
+		if (explorer != NULL)
+			return explorer->get_pid();
+			
+		return 0;
+	}
+	
+	vector<Process *>get_processes() {
+		return processes;
+	}
 	
 };
 
@@ -679,6 +1013,10 @@ protected:
 public:
 	Debug() {
 		sys = new System();
+	}
+	
+	~Debug() {
+		delete sys;
 	}
 	
 	Process *attach(int pid) {
@@ -696,9 +1034,60 @@ public:
 		DebugActiveProcessStop(pid);
 	}
 	
-	void exec(char *file_name, char **args) {
-		//system->start_process(file_name, args);
+	void exec(string file, string cmdline, BOOL debug, BOOL suspended, BOOL console) {
+		DWORD ppid;
+		BOOL is_admin;
+		BOOL inherit_handles = TRUE;
+		DWORD flags = 0;
+		SECURITY_ATTRIBUTES sec_proc = {0};
+		SECURITY_ATTRIBUTES sec_thread = {0};
+		STARTUPINFOA startinfo = {0};
+		PROCESS_INFORMATION pinfo = {0};
+		void *env = NULL;
+		string dir = "C:\\";
+		
+		
+		
+		is_admin = sys->is_admin();
+		ppid = GetCurrentProcessId();
+		
+		flags |= CREATE_DEFAULT_ERROR_MODE;
+		flags |= CREATE_BREAKAWAY_FROM_JOB;
+		
+		if (!console)
+			flags |= DETACHED_PROCESS;
+		if (suspended)
+			flags |= CREATE_SUSPENDED;
+		if (debug) {
+			flags |= DEBUG_PROCESS;
+			flags |= DEBUG_ONLY_THIS_PROCESS;
+		}
+		
+		try {
+			if (!CreateProcessA((LPSTR)file.c_str(), (LPSTR)cmdline.c_str(), &sec_proc, &sec_thread, inherit_handles, flags, env, (LPSTR)dir.c_str(), &startinfo, &pinfo))
+				cout << "cannot create process " << GetLastError() << endl;
+			else 
+				cout << "process created" << endl;
+			
+		} catch(...) {
+			HANDLE hProcess;
+			HANDLE token;
+			HANDLE token2;
+			SECURITY_IMPERSONATION_LEVEL lvl;
+			
+			cout << "B plan" << endl;
+			
+			hProcess = OpenProcess(PROCESS_QUERY_INFORMATION, FALSE, ppid);
+			OpenProcessToken(hProcess, 0, &token);
+			DuplicateToken(token, lvl, &token2);
+						
+			CloseHandle(token);
+			CloseHandle(hProcess);
+			CreateProcessAsUser(token2, file.c_str(), (LPSTR)cmdline.c_str(), &sec_proc, &sec_thread, inherit_handles, flags, env, dir.c_str(), &startinfo, &pinfo);	
+		}	
 	}
+	
+	
 	
 };
 
