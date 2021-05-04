@@ -1,11 +1,22 @@
 /*
-
-	Debugger Engine
+	WinAppDbg64
 	@sha0coder
 	
-	WinAppDbg port to C++ 64bits
+	Mario Vilas' WinAppDbg port to C++ 64bits
 	
-	use -std=C++11
+	COMPILATION FLAGS:
+		 -std=C++11
+	
+	LINK FLAGS:
+		-DPSAPI_VERSION=1
+	
+	TODO:
+		- breakpoints
+		- interactive console mode
+		
+	BUGS:
+		- if the process is launched by debugger, it can't scan the modules, if it's attached it can scan.
+			it's a 229 error opening the handle.
 
 */
 
@@ -16,11 +27,14 @@
 #include <dbghelp.h>
 #include <shlobj.h>
 #include <winver.h>
+#include <winbase.h>
+#include <psapi.h>
 #include <iostream>
 #include <vector>
 
 using namespace std;
 
+#define EXCEPTION_WX86_BREAKPOINT 0x4000001F
 
 //// TIB ////
 
@@ -329,6 +343,14 @@ public:
 			return TRUE;
 		return FALSE;
 	}
+	
+	void *get_entry_point(HANDLE hProc) {		
+		MODULEINFO modinfo;
+		
+		GetModuleInformation(hProc, me.hModule, &modinfo, 0);
+		
+		return modinfo.EntryPoint;
+	}
 };
 
 
@@ -347,6 +369,8 @@ public:
 	Process(int pid) {
 		this->pid = pid;
 		hProc = OpenProcess(PROCESS_ALL_ACCESS, FALSE, pid);
+		if (hProc == NULL)
+			cout << "process handle null " << endl;
 		calc_entry();
 	}
 	
@@ -372,6 +396,7 @@ public:
 	            	
 	            	if (pe32.th32ProcessID == this->pid) {
 	            		this->entry = pe32;
+	            		break;
 					}
 
 	            } while(Process32Next(hSnapshot, &pe32));
@@ -405,12 +430,23 @@ public:
 		return hProc;
 	}
 	
+	HANDLE get_handle(DWORD perms) {
+		return OpenProcess(perms, TRUE, pid);
+	}
+	
 	void kill() {
-		TerminateProcess(hProc, 0);
+		kill(0);
 	}
 	
 	void kill(unsigned int exit_code) {
-		TerminateProcess(hProc, exit_code);
+		HANDLE hTerm;
+		
+		// With PROCESS_ALL_ACCESS handle dont work, the PROCESS_TERMINATE access is needed.
+		
+		hTerm = OpenProcess(PROCESS_TERMINATE, TRUE, pid);
+		TerminateProcess(hTerm, exit_code);
+			
+		CloseHandle(hTerm);
 	}
 	
 	void suspend() {
@@ -447,6 +483,8 @@ public:
 			return;
 		}
 		
+		threads.clear();
+		
 		do {
 			if (pid == te.th32OwnerProcessID) {
 				Thread *t = new Thread(pid, te.th32ThreadID);
@@ -461,9 +499,9 @@ public:
 		MODULEENTRY32 me;
 		HANDLE hndl;
 		
-		hndl = CreateToolhelp32Snapshot(TH32CS_SNAPMODULE, pid);
+		hndl = CreateToolhelp32Snapshot(TH32CS_SNAPMODULE, 0);
 		if (hndl == INVALID_HANDLE_VALUE) {
-			cout << "error: cant open modules handle" << endl;
+			cout << "error: cant open modules handle err:" << GetLastError() << endl;
 			return;
 		}
 		
@@ -474,6 +512,8 @@ public:
 			CloseHandle(hndl);
 			return;
 		}
+		
+		modules.clear();
 		
 		do {
 			if (pid == me.th32ProcessID) {
@@ -496,7 +536,7 @@ public:
 		GetExitCodeProcess(hProc, &code);
 		return code;
 	}
-	
+
 	void scan() {
 		scan_threads();
 		scan_modules();
@@ -516,7 +556,147 @@ public:
 		return NULL;
 	}
 	
-};
+	BOOL is_alive() {
+		if (WaitForSingleObject(hProc, 0) == WAIT_TIMEOUT)
+			return TRUE;
+		return FALSE;
+	}
+	
+	DWORD wait(DWORD millis) {
+		return WaitForSingleObject(hProc, 0);
+	}
+	
+	void flush_instruction_cache() {
+		scan_modules();
+		FlushInstructionCache(hProc, modules[0]->get_ptr(), entry.dwSize);
+	}
+	
+	void debug_break() {
+		// trigger system breakpoint on the process
+		
+		DebugBreakProcess(hProc);
+	}
+	
+	FILETIME get_start_time() {
+		FILETIME creat;
+		
+		GetProcessTimes(hProc, &creat, NULL, NULL, NULL);
+		return creat;
+	}
+	
+	FILETIME get_exit_time() {
+		FILETIME exit;
+		
+		GetProcessTimes(hProc, NULL, &exit, NULL, NULL);
+		return exit;
+	}
+	
+	FILETIME get_kernel_time() {
+		FILETIME kernel;
+		
+		GetProcessTimes(hProc, NULL, NULL, &kernel, NULL);
+		return kernel;
+	}
+	
+	FILETIME get_user_time() {
+		FILETIME user;
+		
+		GetProcessTimes(hProc, NULL, NULL, NULL, &user);
+		return user;
+	}
+	
+	long get_running_time() {
+		FILETIME start, exit, time;
+		unsigned long long start_time, exit_time, running_time;
+		
+		start = get_start_time();
+		
+		if (is_alive()) 
+			GetSystemTimeAsFileTime(&exit);
+		else
+			exit = get_exit_time();
+			
+		
+		start_time = start.dwLowDateTime + ((unsigned long long)start.dwHighDateTime << 32);
+		exit_time = exit.dwLowDateTime + ((unsigned long long)exit.dwHighDateTime << 32);
+		running_time = exit_time - start_time;
+		
+		return running_time / 10000;  // 100 nanoseconds steps => milliseconds
+	}
+	
+	/*
+		this is only 32bits
+	
+	DWORD get_dep_policy() {
+		BOOL permanent;
+		DWORD flags;
+		HANDLE hndl;
+		
+		hndl = get_handle(PROCESS_QUERY_INFORMATION);
+		GetProcessDEPPolicy(hndl, &flags, &permanent);
+		CloseHandle(hndl);
+		
+		
+		//   return the following values:
+        //     - 0: DEP is disabled for this process.
+        //     - 1: DEP is enabled for this process.
+        //     - 2: DEP-ATL thunk emulation is disabled for this process.
+		//
+		//	if permanent is true the DEP settings cannot be changed in runtime for this process.
+		
+		
+		return flags;
+	}
+	
+	BOOL is_dep_permanent() {
+		BOOL permanent;
+		DWORD flags;
+		HANDLE hndl;
+		
+		hndl = get_handle(PROCESS_QUERY_INFORMATION);
+		GetProcessDEPPolicy(hndl, &flags, &permanent);
+		CloseHandle(hndl);
+		
+		// if permanent is true the DEP settings cannot be changed in runtime for this process.
+		
+		return permanent;
+	}*/
+	
+	PEB *get_peb_address() {
+		HANDLE hndl;
+		PROCESSINFOCLASS infocls;
+		PROCESS_BASIC_INFORMATION* pBasicInfo = new PROCESS_BASIC_INFORMATION();
+		ULONG rlen;
+		ULONG pinfo_len = sizeof(PROCESS_BASIC_INFORMATION);
+		
+		
+		hndl = get_handle(PROCESS_VM_READ | PROCESS_QUERY_INFORMATION);
+		NtQueryInformationProcess(hndl, ProcessBasicInformation, pBasicInfo, pinfo_len, &rlen);
+		CloseHandle(hndl);
+		
+		return pBasicInfo->PebBaseAddress;
+	}
+	
+	PEB get_peb() {
+		return *get_peb_address();
+	}
+	
+	void *get_entry_point() {
+		HANDLE hndl;
+		void *entry;
+		
+		scan_modules();
+		if (modules.size() == 0)
+			return NULL;
+			
+		hndl = get_handle(PROCESS_VM_READ | PROCESS_QUERY_INFORMATION);
+		entry = modules[0]->get_entry_point(hndl);
+		CloseHandle(hndl);
+		
+		return entry;
+	}
+	
+}; // end Process
 
 //// Window ////
 
@@ -527,9 +707,7 @@ public:
 	Window(HWND hWin) {
 		this->hWin = hWin;
 	}
-	
-	
-};
+}; // end Window
 
 //// Service ////
 
@@ -678,7 +856,7 @@ public:
 		}
 	}
 	
-};
+}; // end Service
 
 
 //// System ////
@@ -922,6 +1100,8 @@ public:
 		DWORD buff_sz = 0;
 		DWORD more_bytes_needed, service_count;
 		
+		services.clear();
+		
 		scm = OpenSCManagerA(NULL, NULL, SC_MANAGER_ENUMERATE_SERVICE);
 		if (scm) {
 			for (;;) {
@@ -1000,30 +1180,103 @@ public:
 		return processes;
 	}
 	
-};
+}; // end System
+
+class Event {
+protected:
+	Process *process;
+	DEBUG_EVENT ev;
+	string name;
+	DWORD continue_status;
+	
+public:
+	Event(DEBUG_EVENT ev) {
+		this->ev = ev;
+		process = new Process(ev.dwProcessId);
+	}
+	
+	~Event() {
+		delete process;
+	}
+	
+	string get_name() {
+		return name;
+	}
+	
+	void set_continue_status(DWORD status) {
+		this->continue_status = status;
+	}
+	
+	DWORD get_continue_status() {
+		return continue_status;
+	}
+	
+	DWORD get_event_code() {
+		return ev.dwDebugEventCode;
+	}
+	
+	DWORD get_exception_code() {
+		return ev.u.Exception.ExceptionRecord.ExceptionCode;
+	}
+	
+	DWORD get_rip_type() {
+		return ev.u.RipInfo.dwType;
+	}
+	
+	DWORD get_pid() {
+		return ev.dwProcessId;
+	}
+	
+	DWORD get_tid() {
+		return ev.dwThreadId;
+	}
+	
+	Process *get_process() {
+		return process;
+	}
+
+	
+}; // end Event
+
 
 //// Debug //// 
 
 
 class Debug {
 protected:
-	int pid;
+	int pid;  // debugged pid
+	BOOL debugging;
 	System *sys;
+	Event *last_event = NULL;
+	vector<Event *> events;
+	Process *process; // debugged process
+	BOOL kill_on_exit = TRUE;
+	BOOL hostile_mode = FALSE;
+	BOOL attached = FALSE;
+	BOOL do_trace = FALSE;
 	
 public:
 	Debug() {
 		sys = new System();
+		debugging = FALSE;
 	}
 	
 	~Debug() {
 		delete sys;
 	}
 	
+	int get_pid() {
+		return pid;
+	}
+	
 	Process *attach(int pid) {
 		if (DebugActiveProcess(pid)) {
+			log("attach creating process");
 			Process *p = new Process(pid);
 			p->scan();
 			this->pid = pid;
+			this->debugging = TRUE;
+			this->process = p;
 			return p;
 		}
 		
@@ -1031,10 +1284,13 @@ public:
 	}
 	
 	void detach() {
+		log("detaching");
 		DebugActiveProcessStop(pid);
+		
+		_cleanup_process();
 	}
 	
-	void exec(string file, string cmdline, BOOL debug, BOOL suspended, BOOL console) {
+	Process *exec(string file, string cmdline, BOOL debug, BOOL suspended, BOOL console) {
 		DWORD ppid;
 		BOOL is_admin;
 		BOOL inherit_handles = TRUE;
@@ -1045,8 +1301,6 @@ public:
 		PROCESS_INFORMATION pinfo = {0};
 		void *env = NULL;
 		string dir = "C:\\";
-		
-		
 		
 		is_admin = sys->is_admin();
 		ppid = GetCurrentProcessId();
@@ -1064,10 +1318,22 @@ public:
 		}
 		
 		try {
-			if (!CreateProcessA((LPSTR)file.c_str(), (LPSTR)cmdline.c_str(), &sec_proc, &sec_thread, inherit_handles, flags, env, (LPSTR)dir.c_str(), &startinfo, &pinfo))
+			if (!CreateProcessA((LPSTR)file.c_str(), (LPSTR)cmdline.c_str(), &sec_proc, &sec_thread, inherit_handles, flags, env, (LPSTR)dir.c_str(), &startinfo, &pinfo)) {
 				cout << "cannot create process " << GetLastError() << endl;
-			else 
-				cout << "process created" << endl;
+				return NULL;
+				
+			} else  {
+				cout << "process created pid:" << pinfo.dwProcessId << endl;
+				sys->set_kill_on_exit_mode(TRUE);
+				this->kill_on_exit = TRUE;
+				this->pid = pinfo.dwProcessId;
+				this->debugging = TRUE;
+				log("exec try creating process");
+				Process *proc = new Process(pinfo.dwProcessId);
+				proc->scan();
+				this->process = proc;
+				return proc;
+			}
 			
 		} catch(...) {
 			HANDLE hProcess;
@@ -1075,19 +1341,279 @@ public:
 			HANDLE token2;
 			SECURITY_IMPERSONATION_LEVEL lvl;
 			
-			cout << "B plan" << endl;
-			
 			hProcess = OpenProcess(PROCESS_QUERY_INFORMATION, FALSE, ppid);
 			OpenProcessToken(hProcess, 0, &token);
 			DuplicateToken(token, lvl, &token2);
-						
+			
 			CloseHandle(token);
 			CloseHandle(hProcess);
-			CreateProcessAsUser(token2, file.c_str(), (LPSTR)cmdline.c_str(), &sec_proc, &sec_thread, inherit_handles, flags, env, dir.c_str(), &startinfo, &pinfo);	
-		}	
+			CreateProcessAsUser(token2, file.c_str(), (LPSTR)cmdline.c_str(), &sec_proc, &sec_thread, inherit_handles, flags, env, dir.c_str(), &startinfo, &pinfo);
+			sys->set_kill_on_exit_mode(TRUE);
+			this->kill_on_exit = TRUE;
+			this->pid = pinfo.dwProcessId;
+			this->debugging = TRUE;
+			log("exec catch creating process");
+			Process *proc = new Process(pinfo.dwProcessId);
+			proc->scan();
+			this->process = proc;
+			return proc;
+		}
+		
+		return NULL;
 	}
 	
+	void _cleanup_process() {
+		log("_cleanup_process");
+		/*if (debugging)
+			delete process;*/
+		debugging = FALSE;
+	}
 	
+	void kill() {
+		log("killing");
+		if (process != NULL && process->is_alive()) {
+			log("proces alive");
+			try {
+				log("trying suspend");
+				process->suspend();
+				log("suspended");
+				detach();
+				log("detached");
+				
+				if (kill_on_exit) {
+					process->kill();
+					log("killed");
+				}
+					
+				
+			} catch(...) {
+				log("catch");
+				
+				try {			
+					log("killing process");
+					process->kill();
+					log("process killed");
+				} catch(...) {
+					cout << "cannot stop the process." << endl;
+				}
+			}
+		}
+		
+		_cleanup_process();
+	}
 	
+	Event *wait(DWORD millis) {
+		DEBUG_EVENT ev;
+		WaitForDebugEvent(&ev, millis);
+		
+		Event *event = new Event(ev);
+		events.push_back(event);
+		last_event = event;
+		return event;
+	}
+	
+	Event *wait() {
+		DEBUG_EVENT ev;
+		WaitForDebugEvent(&ev, INFINITE);
+		
+		Event *event = new Event(ev);
+		events.push_back(event);
+		last_event = event;
+		return event;
+	}
+	
+	Event *pop_event() {
+		Event *ev;
+		int last_item;
+		
+		if (events.size() == 0)
+			return NULL;
+		
+		last_item = events.size()-1;
+		ev = events[last_item];
+		events.erase(events.begin()+last_item);
+		
+		return ev;
+	}
+	
+	void dispatch() {
+		Event *event;
+		
+		if (events.size() == 0 && last_event == NULL)
+			return;
+		
+		if (events.size() > 0) {
+			
+
+			event = pop_event();
+		} else {
+			event = last_event;
+		}
+		
+		switch(event->get_event_code()) {
+			case EXCEPTION_DEBUG_EVENT:
+				switch(event->get_exception_code()) {
+					case EXCEPTION_BREAKPOINT:
+                    case EXCEPTION_WX86_BREAKPOINT:
+                    case EXCEPTION_SINGLE_STEP:
+                    case EXCEPTION_GUARD_PAGE:
+                    	event->set_continue_status(DBG_CONTINUE);
+                    	break;
+                    case EXCEPTION_INVALID_HANDLE:
+                    	if (hostile_mode)
+                    		event->set_continue_status(DBG_EXCEPTION_NOT_HANDLED);
+                    	break;
+                    		event->set_continue_status(DBG_CONTINUE);
+                    default:
+                    	event->set_continue_status(DBG_EXCEPTION_NOT_HANDLED);
+				}
+				break;
+				
+			case RIP_EVENT:
+				if (event->get_rip_type() == SLE_ERROR)
+					event->set_continue_status(DBG_TERMINATE_PROCESS);
+				break;
+				
+			default:
+				event->set_continue_status(DBG_CONTINUE);
+				break;
+				
+		}
+		
+		_dispatch(event);
+	}
+	
+	void _dispatch(Event *event) {
+		//TODO: implement
+	}
+	
+	void cont() {
+		if (last_event == NULL)			
+			return;
+		cont(last_event);
+	}
+		
+	void cont(Event *event) {
+		
+		if (debugging && pid == event->get_pid()) {
+			
+			process->flush_instruction_cache();
+			ContinueDebugEvent(event->get_pid(), event->get_tid(), event->get_continue_status());
+			
+		}
+		
+		if (event == last_event) {
+			last_event = NULL; // why?
+		}
+	
+	}
+	
+	void resume(){
+		process->resume();
+	}
+	
+	void stop() {
+		if (last_event != NULL) {
+			log("there is last event");
+			disable_process_breakpoints(last_event->get_pid());
+			disable_thread_breakpoints(last_event->get_tid());
+			last_event->set_continue_status(DBG_CONTINUE);
+			cont(last_event);
+		}
+		
+		log("cont finished");
+		
+		if (kill_on_exit)
+			kill_all();
+		else
+			detach();
+		
+		log("stop process finished");	
+	}
+	
+	void next() {
+		try {
+			wait();
+		} catch(...) {
+			stop();
+			return;
+		}
+		
+		dispatch();
+		cont();	
+	}
+	
+	void loop() {
+		for (;;) next();
+	}
+	
+	BOOL is_debugee_started() {
+		return debugging;
+	}
+	
+	BOOL is_debugee_attached() {
+		return attached;
+	}
+	
+	BOOL is_hostile_mode() {
+		return hostile_mode;
+	}
+	
+	void set_hostile_mode() {
+		hostile_mode = TRUE;
+	}
+	
+	/*
+	void interactive() {
+		cout << endl;
+		cout << string(79, '-') << endl;
+		cout << "Interactive debugging session started." << endl;
+        cout << "Use the \"help\" command to list all available commands." << endl;
+        cout << "Use the \"quit\" command to close this session." << endl;
+        cout << string(79, '-') << endl;
+        if (last_event == NULL)
+        	cout << endl;
+        
+        auto console = new Console();
+        console.confirm_quit(TRUE);
+        console.load_history();
+        
+        console.start_using_debugger(self);
+        console.loop();
+        
+        console.stop_using_debugger();
+        console.save_history();
+        
+        cout << endl;
+        cout << string(79, '-') << endl;
+        cout << "Interactive debugging session closed." << endl;
+        cout << string(79, '-') << endl;
+        cout << endl;
+	}*/
+	
+	void _notify_create_process(Event *event) {
+		
+	}
+	
+	void disable_process_breakpoints(int pid) {
+		
+	}
+	
+	void disable_thread_breakpoints(int tid) {
+		
+	}
+	
+	void kill_all() {
+		log("killall");
+		kill();
+	}
+	
+	void trace() {
+		do_trace = !do_trace;
+	}
+	
+	void log(string msg) {
+		cout << "=> " << msg << endl;
+	}
 };
 
