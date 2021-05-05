@@ -4,11 +4,11 @@
 	
 	Mario Vilas' WinAppDbg port to C++ 64bits
 	
-	COMPILATION FLAGS:
+	COMPILER FLAGS:
 		 -std=C++11
 	
-	LINK FLAGS:
-		-DPSAPI_VERSION=1
+	LINKER FLAGS:
+		-lpsapi 
 	
 	TODO:
 		- breakpoints
@@ -18,6 +18,21 @@
 		- if the process is launched by debugger, it can't scan the modules, if it's attached it can scan.
 			it's a 229 error opening the handle.
 
+
+	OBJECTS:
+	
+			  +--> breakpoints --> Breakpoint	  
+              |
+	         Debug --> events --> Event
+	          |
+System --->	Process -> threads --> Thread
+   |	         |
+   |             +--> modules --> Module
+   +---> services --> Service
+   |
+   +---> Window
+   
+   
 */
 
 
@@ -278,7 +293,7 @@ public:
 	THREAD_BASIC_INFORMATION get_tbi() {
 		THREAD_BASIC_INFORMATION tbi = {0};
 		
-		NtQueryInformationThread(hThread, ThreadBasicInformation, &tbi, sizeof(tbi), nullptr);
+		NtQueryInformationThread(hThread, ThreadBasicInformation, &tbi, sizeof(tbi), NULL);
 		return tbi;
 	}
 	
@@ -695,6 +710,417 @@ public:
 		
 		return entry;
 	}
+	
+	Module *get_main_module() {
+		scan_modules();
+		if (modules.size() == 0)
+			return NULL;
+		
+		return modules[0];
+	}
+	
+	void *get_image_base() {
+		Module *mod = get_main_module();
+		if (mod != NULL) {
+			//TODO: ?
+		}
+		return NULL; //get_peb().ImageBaseAddress;
+	}
+	
+	MEMORY_BASIC_INFORMATION mquery(void *address) {
+		HANDLE hndl;
+		MEMORY_BASIC_INFORMATION mbi;
+		
+		// call this with a try/catch
+		// http://winapi.freetechsecrets.com/win32/WIN32MEMORYBASICINFORMATION.htm
+	
+		hndl = get_handle(PROCESS_QUERY_INFORMATION);
+		VirtualQueryEx(hndl, address, &mbi, sizeof(mbi));
+		CloseHandle(hndl);
+
+		return mbi;
+	}
+	
+	DWORD mprotect(void *address, SIZE_T size, DWORD prot) {
+		HANDLE hndl;
+		DWORD prev_prot;
+		
+		hndl = get_handle(PROCESS_VM_OPERATION);
+		VirtualProtectEx(hndl, address, size, prot, &prev_prot);
+		CloseHandle(hndl);
+		
+		return prev_prot;
+	}
+	
+	void write(void *address, void *buff, SIZE_T size) {
+		poke(address, buff, size);
+	}
+	
+	void poke(void *address, void *buff, SIZE_T size) {
+		MEMORY_BASIC_INFORMATION mbi;
+		HANDLE hndl;
+		SIZE_T len;
+		DWORD prot = 0;
+
+		try {
+			mbi = mquery(address);
+		} catch(...) {
+			cout << "/!\\ invalid address" << endl;
+			return;
+		}
+		
+		if (mbi.Type & MEM_IMAGE || mbi.Type & MEM_MAPPED)
+			prot |= PAGE_WRITECOPY;
+		
+		if (mbi.AllocationProtect & PAGE_READWRITE || mbi.AllocationProtect & PAGE_EXECUTE_READWRITE)
+			prot = 0;
+		
+		else if (mbi.AllocationProtect & PAGE_EXECUTE_READ || mbi.AllocationProtect & PAGE_EXECUTE_WRITECOPY)
+			prot = PAGE_EXECUTE_READWRITE;
+			
+		else 
+			prot = PAGE_READWRITE;
+			
+			
+		if (prot) {
+			mprotect(address, size, prot);
+		}
+
+		hndl = get_handle(PROCESS_VM_WRITE);
+		if (!WriteProcessMemory(hndl, address, buff, size, &len))
+			cout << "cant write memory of process " << this->pid << endl;
+		CloseHandle(hndl);
+		
+		if (size != len)
+			cout << "process write " << len << " instead of " << size << endl;
+		
+		//TODO: restore previous privileges?
+	}
+	
+	void read(void *address, void *buff, SIZE_T size) {
+		HANDLE hndl;
+		SIZE_T len;
+		
+		hndl = get_handle(PROCESS_VM_READ | PROCESS_QUERY_INFORMATION);
+		if (!ReadProcessMemory(hndl, address, buff, size, &len))
+			cout << "cant read memory of process " << this->pid << endl;
+		CloseHandle(hndl);
+		
+		if (size != len)
+			cout << "process read " << len << " instead of " << size << endl;
+		
+	}
+	
+	char read_char(void *address) {
+		char buff[2];
+		
+		read(address, buff, 1);
+		
+		return buff[0];
+	}
+	
+	void write_char(void *address, char c) {
+		char buff[3];
+		
+		buff[0] = c;
+		
+		write(address, buff, 1);
+	}
+	
+	int read_int(void *address) {
+		int value;
+		
+		read(address, (void *)&value, sizeof(int));
+		
+		return value;
+	}
+	
+	void write_int(void *address, int value) {
+		write(address, (void *)&value, sizeof(int));
+	}
+	
+	short read_short(void *address) {
+		short value;
+		
+		read(address, (void *)&value, sizeof(short));
+		
+		return value;
+	}
+	
+	void write_short(void *address, short value) {
+		write(address, (void *)&value, sizeof(short));
+	}
+	
+	unsigned short read_unsigned_short(void *address) {
+		unsigned short value;
+		
+		read(address, (void *)&value, sizeof(unsigned short));
+		
+		return value;
+	}
+	
+	void write_unsigned_short(void *address, unsigned short value) {
+		write(address, (void *)&value, sizeof(unsigned short));
+	}
+	
+	unsigned int read_uint(void *address) {
+		unsigned int value;
+		
+		read(address, (void *)&value, sizeof(unsigned int));
+		
+		return value;
+	}
+	
+	void write_uint(void *address, unsigned int value) {
+		write(address, (void *)&value, sizeof(unsigned int));
+	}
+	
+	float read_float(void *address) {
+		float value;
+		
+		read(address, (void *)&value, sizeof(float));
+		
+		return value;
+	}
+	
+	void write_float(void *address, float value) {
+		write(address, (void *)&value, sizeof(float));
+	}
+	
+	double read_double(void *address) {
+		double value;
+		
+		read(address, (void *)&value, sizeof(double));
+		
+		return value;
+	}
+	
+	void write_double(void *address, double value) {
+		write(address, (void *)&value, sizeof(double));
+	}
+	
+	long read_long(void *address) {
+		long value;
+		
+		read(address, (void *)&value, sizeof(long));
+		
+		return value;
+	}
+	
+	void write_long(void *address, long value) {
+		write(address, (void *)&value, sizeof(long));
+	}
+	
+	unsigned long  read_unsigned_long(void *address) {
+		unsigned long value;
+		
+		read(address, (void *)&value, sizeof(unsigned long));
+		
+		return value;
+	}
+	
+	void write_unsigned_long(void *address, unsigned long value) {
+		write(address, (void *)&value, sizeof(unsigned long));
+	}
+	
+	long long read_long_long(void *address) {
+		long long value;
+		
+		read(address, (void *)&value, sizeof(long long));
+		
+		return value;		
+	}
+	
+	void write_long_long(void *address, long long value) {
+		write(address, (void *)&value, sizeof(long long));
+	}
+	
+	void *read_pointer(void *address) {
+		void *pointer;
+		
+		read(address, &pointer, sizeof(void *));
+		
+		return pointer;
+	}
+	
+	void write_pointer(void *address, void *pointer) {
+		write(address, &pointer, sizeof(void *));
+	}
+	
+	void free(void *address) {
+		HANDLE hndl;
+		
+		hndl = get_handle(PROCESS_VM_OPERATION);
+		VirtualFreeEx(hndl, address, 0, MEM_RELEASE);
+		CloseHandle(hndl);
+	}
+	
+	BOOL is_pointer(void *address) {
+		MEMORY_BASIC_INFORMATION mbi;
+		
+		try {
+			mbi = mquery(address);	
+		} catch(...) {
+			return FALSE;
+		}
+		
+		return TRUE;
+	}
+	
+	BOOL is_address_valid(void *address) {
+		MEMORY_BASIC_INFORMATION mbi;
+		
+		try {
+			mbi = mquery(address);	
+		} catch(...) {
+			return FALSE;
+		}
+		
+		return TRUE;
+	}
+	
+	BOOL is_address_free(void *address) {
+		MEMORY_BASIC_INFORMATION mbi;
+		
+		try {
+			mbi = mquery(address);	
+		} catch(...) {
+			return FALSE;
+		}
+		
+		if (mbi.State & MEM_FREE)
+			return TRUE;
+		return FALSE;
+	}
+	
+	BOOL is_address_reserved(void *address) {
+		MEMORY_BASIC_INFORMATION mbi;
+		
+		try {
+			mbi = mquery(address);	
+		} catch(...) {
+			return FALSE;
+		}
+		
+		if (mbi.State & MEM_RESERVE)
+			return TRUE;
+		return FALSE;
+	}
+	
+	BOOL is_address_commited(void *address) {
+		MEMORY_BASIC_INFORMATION mbi;
+		
+		try {
+			mbi = mquery(address);	
+		} catch(...) {
+			return FALSE;
+		}
+		
+		if (mbi.State & MEM_COMMIT)
+			return TRUE;
+		return FALSE;
+	}
+	
+	BOOL is_address_guard(void *address) {
+		MEMORY_BASIC_INFORMATION mbi;
+		
+		try {   
+			mbi = mquery(address);	
+		} catch(...) {
+			return FALSE;
+		}
+		
+		if (mbi.AllocationProtect & PAGE_GUARD)
+			return TRUE;
+		return FALSE;
+	}
+	
+	BOOL is_address_readable(void *address) {
+		MEMORY_BASIC_INFORMATION mbi;
+		
+		try {   
+			mbi = mquery(address);	
+		} catch(...) {
+			return FALSE;
+		}
+		
+		if (mbi.AllocationProtect & PAGE_READONLY || 
+			mbi.AllocationProtect & PAGE_READWRITE ||
+			mbi.AllocationProtect & PAGE_EXECUTE_READ ||
+			mbi.AllocationProtect & PAGE_EXECUTE_READWRITE
+			)
+			return TRUE;
+		return FALSE;
+	}
+	
+	BOOL is_address_writeable(void *address) {
+		MEMORY_BASIC_INFORMATION mbi;
+		
+		try {   
+			mbi = mquery(address);	
+		} catch(...) {
+			return FALSE;
+		}
+		
+		if (mbi.AllocationProtect & PAGE_READWRITE || 
+			mbi.AllocationProtect & PAGE_EXECUTE_READWRITE)
+			return TRUE;
+		return FALSE;
+	}
+	
+	BOOL is_address_copy_on_write(void *address) {
+		MEMORY_BASIC_INFORMATION mbi;
+		
+		try {   
+			mbi = mquery(address);	
+		} catch(...) {
+			return FALSE;
+		}
+		
+		if (mbi.AllocationProtect & PAGE_WRITECOPY || 
+			mbi.AllocationProtect & PAGE_EXECUTE_WRITECOPY)
+			return TRUE;
+		return FALSE;
+	}
+	
+	BOOL is_address_executable(void *address) {
+		MEMORY_BASIC_INFORMATION mbi;
+		
+		try {   
+			mbi = mquery(address);	
+		} catch(...) {
+			return FALSE;
+		}
+		
+		if (mbi.AllocationProtect & PAGE_EXECUTE_READ || 
+			mbi.AllocationProtect & PAGE_EXECUTE_READWRITE ||
+			mbi.AllocationProtect & PAGE_EXECUTE_WRITECOPY)
+			return TRUE;
+		return FALSE;
+	}
+	
+	BOOL is_address_executable_and_writeable(void *address) {
+		MEMORY_BASIC_INFORMATION mbi;
+		
+		try {   
+			mbi = mquery(address);	
+		} catch(...) {
+			return FALSE;
+		}
+		
+		if (mbi.AllocationProtect & PAGE_EXECUTE_READWRITE)
+			return TRUE;
+		return FALSE;
+	}
+	
+	
+	
+	
+	
+	
+	
+	
+	
 	
 }; // end Process
 
@@ -1190,9 +1616,9 @@ protected:
 	DWORD continue_status;
 	
 public:
-	Event(DEBUG_EVENT ev) {
+	Event(DEBUG_EVENT ev, Process *process) {
 		this->ev = ev;
-		process = new Process(ev.dwProcessId);
+		this->process = process;
 	}
 	
 	~Event() {
@@ -1237,6 +1663,152 @@ public:
 
 	
 }; // end Event
+
+
+//// Breakpoint ////
+
+typedef BOOL (*bpcallback)(Event *);
+
+class Breakpoint {
+protected:
+	DWORD64 address;
+	int state;
+	int size;
+	bpcallback action = NULL;
+	
+public:
+	static const int disabled = 0;
+	static const int enabled = 1;
+	static const int oneshot = 2;
+	static const int running = 3;
+	
+	
+	Breakpoint(DWORD64 address) {
+		this->address = address;
+		state = Breakpoint::disabled;
+		size = 1;
+	}
+	
+	Breakpoint(DWORD64 address, int size) {
+		this->address = address;
+		this->state = Breakpoint::disabled;
+		this->size = size;
+	}
+	
+	BOOL is_disabled() {
+		if (state == Breakpoint::disabled) 
+			return TRUE;
+		return FALSE;
+	}
+	
+	BOOL is_enabled() {
+		if (state == Breakpoint::enabled)
+			return TRUE;
+		return FALSE;
+	}
+	
+	BOOL is_one_shot() {
+		if (state == Breakpoint::oneshot)
+			return TRUE;
+		return FALSE;
+	}
+	
+	BOOL is_running() {
+		if (state == Breakpoint::running)
+			return TRUE;
+		return FALSE;
+	}
+	
+	BOOL is_here(DWORD64 address) {
+		if (this->address == address) 
+			return TRUE;
+		return FALSE;
+	}
+	
+	int get_size() {
+		return size;
+	}
+	
+	DWORD64 get_address() {
+		return address;
+	}
+	
+	DWORD64 get_end_address() {
+		return address+size;
+	}
+	
+	int get_state() {
+		return state;
+	}
+	
+	void set_action(bpcallback action) {
+		this->action = action;
+	}
+	
+	BOOL run_action(Event *ev) {
+		if (action == NULL)
+			return TRUE;
+			
+		return action(ev);	//TODO: use try/catch?
+	}
+	
+	void _bad_transition(int state) {
+		cout << "bad transition from " << this->state << " to " << state << endl;
+	}
+	
+	void disable() {
+		state = Breakpoint::disabled;
+	}
+	
+	void enable() {
+		state = Breakpoint::enabled;
+	}
+	
+	void one_shot() {
+		state = Breakpoint::oneshot;
+	}
+	
+	void run() {
+		state = Breakpoint::running;
+	}
+	
+	void hit(Event *ev) {
+		
+		//TODO: set the breakpoint on the event, but in a one file mutiple class thats not possible
+		
+		switch(state) {
+			case Breakpoint::enabled:
+				run();
+				break;
+				
+			case Breakpoint::running:
+				enable();
+				break;
+				
+			case Breakpoint::oneshot:
+				disable();
+				break;
+				
+			case Breakpoint::disabled:
+				cout << "hit a disabled breakpoint at " << address << endl;
+				break;
+		}
+	}
+	
+}; // end Breakpoint
+
+class CodeBreakpoint : public Breakpoint {
+protected:
+	char instruction = '\xcc';
+public:
+	
+	
+	
+	
+	
+	
+}; //  end CodeBreakpoint
+
 
 
 //// Debug //// 
@@ -1406,7 +1978,7 @@ public:
 		DEBUG_EVENT ev;
 		WaitForDebugEvent(&ev, millis);
 		
-		Event *event = new Event(ev);
+		Event *event = new Event(ev, this->process);
 		events.push_back(event);
 		last_event = event;
 		return event;
@@ -1416,7 +1988,7 @@ public:
 		DEBUG_EVENT ev;
 		WaitForDebugEvent(&ev, INFINITE);
 		
-		Event *event = new Event(ev);
+		Event *event = new Event(ev, this->process);
 		events.push_back(event);
 		last_event = event;
 		return event;
@@ -1496,10 +2068,8 @@ public:
 	void cont(Event *event) {
 		
 		if (debugging && pid == event->get_pid()) {
-			
 			process->flush_instruction_cache();
 			ContinueDebugEvent(event->get_pid(), event->get_tid(), event->get_continue_status());
-			
 		}
 		
 		if (event == last_event) {
@@ -1533,13 +2103,18 @@ public:
 	
 	void next() {
 		try {
+			log("waiting");
 			wait();
+			log("waited");
 		} catch(...) {
+			log("next catch");
 			stop();
 			return;
 		}
 		
+		log("dispatching");
 		dispatch();
+		log("dispatched");
 		cont();	
 	}
 	
