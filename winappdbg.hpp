@@ -28,6 +28,9 @@
 System --->	Process -> threads --> Thread
    |	         |
    |             +--> modules --> Module
+   |             \
+   |              +--> MemoryAddresses
+   |
    +---> services --> Service
    |
    +---> Window
@@ -108,6 +111,8 @@ const DWORD parity      = 0x4;
 const DWORD carry       = 0x1;
 
 
+const DWORD64 END_ADDRESS = 0x7ffffff0000;
+const DWORD64 DEFAULT_PAGE_SIZE = 0x1000; // default page size for when can not be calculated in runtime.
 
 //// THREAD ////
 
@@ -367,6 +372,81 @@ public:
 		return modinfo.EntryPoint;
 	}
 };
+
+
+//// MemoryAddresses ////
+
+class MemoryAddresses {
+protected:
+public:
+	static DWORD page_size() {
+		SYSTEM_INFO sys_info;
+		
+		try {
+			GetSystemInfo(&sys_info);
+			return sys_info.dwPageSize;
+			
+		} catch (...) {
+			return DEFAULT_PAGE_SIZE;
+		}
+
+		return DEFAULT_PAGE_SIZE;		
+	}
+	
+	static DWORD64 align_address_to_page_start(DWORD64 address) {
+		return address - (address % MemoryAddresses::page_size());
+	}
+	
+	static DWORD64 align_address_to_page_end(DWORD64 address) {	
+		return address + MemoryAddresses::page_size() - (address % MemoryAddresses::page_size());
+	}
+	
+	static vector<DWORD64> align_address_range(DWORD64 begin, DWORD64 end) {
+		DWORD64 tmp;
+		vector<DWORD64> range;
+		
+		if (end == 0)
+			end = END_ADDRESS; 
+			
+		if (end < begin) {
+			tmp = end;
+			end = begin;
+			begin = tmp;
+		}
+		
+		cout << "end1: " << end << endl;
+		
+		begin = MemoryAddresses::align_address_to_page_start(begin);
+		if (end != MemoryAddresses::align_address_to_page_start(end))
+			end = MemoryAddresses::align_address_to_page_end(end);
+			
+		cout << "end2: " << end << endl;
+		
+		range.push_back(begin);
+		range.push_back(end);
+		
+		return range;
+	}
+	
+	static SIZE_T get_buffer_size_in_pages(DWORD64 address, SIZE_T size) {
+		DWORD64 begin, end;
+		
+		vector<DWORD64> range = MemoryAddresses::align_address_range(address, address + size);
+		begin = range[0];
+		end = range[1];
+		
+		return ((end - begin) / MemoryAddresses::page_size());
+	}
+	
+	static BOOL do_ranges_intersect(DWORD64 begin, DWORD64 end, DWORD64 old_begin, DWORD64 old_end) {
+		return (old_begin <= begin < old_end) ||
+				(old_begin < end <= old_end) ||
+				(begin <= old_begin < end) ||
+				(begin < old_end <= end);
+	}
+	
+	
+}; // end MemoryAddresses
 
 
 //// PROCESS ////
@@ -752,21 +832,55 @@ public:
 		return prev_prot;
 	}
 	
-	void write(void *address, void *buff, SIZE_T size) {
-		poke(address, buff, size);
+	string get_perms_rwx(void *address) {
+		MEMORY_BASIC_INFORMATION mbi;
+		BOOL has_content, is_commited;
+		
+		try {
+			mbi = mquery(address);
+		} catch(...) {
+			return string("---");
+		}
+		
+		is_commited = (mbi.State & MEM_COMMIT);
+		has_content = (is_commited && !(mbi.Protect & (PAGE_GUARD|PAGE_NOACCESS)));
+		
+		if (!has_content)
+			return string("---");
+		
+		if (mbi.Protect & PAGE_EXECUTE_READWRITE)
+			return string("rwx");
+		
+		if (mbi.Protect & PAGE_READWRITE) 
+			return string("rw-");
+			
+		return string("r--");
 	}
 	
-	void poke(void *address, void *buff, SIZE_T size) {
+	SIZE_T write(void *address, void *buff, SIZE_T size) {
+		return poke(address, buff, size);
+	}
+	
+	SIZE_T poke(void *address, void *buff, SIZE_T size) {
 		MEMORY_BASIC_INFORMATION mbi;
 		HANDLE hndl;
 		SIZE_T len;
 		DWORD prot = 0;
+		BOOL has_content, is_commited;
 
 		try {
 			mbi = mquery(address);
 		} catch(...) {
 			cout << "/!\\ invalid address" << endl;
-			return;
+			return 0;
+		}
+		
+		is_commited = (mbi.State & MEM_COMMIT);
+		has_content = (is_commited && !(mbi.Protect & (PAGE_GUARD|PAGE_NOACCESS)));
+		
+		if (!has_content) {
+			cout << "cant write, address has not content " << endl;
+			return 0;
 		}
 		
 		if (mbi.Type & MEM_IMAGE || mbi.Type & MEM_MAPPED)
@@ -781,34 +895,29 @@ public:
 		else 
 			prot = PAGE_READWRITE;
 			
+		cout << "prot: " << prot;
 			
-		if (prot) {
+		if (prot) 
 			mprotect(address, size, prot);
-		}
-
-		hndl = get_handle(PROCESS_VM_WRITE);
+		
+		hndl = get_handle(PROCESS_VM_WRITE|PROCESS_VM_OPERATION);
 		if (!WriteProcessMemory(hndl, address, buff, size, &len))
-			cout << "cant write memory of process " << this->pid << endl;
+			cout << "cant write memory of process " << this->pid << " err: " << GetLastError() << endl;
 		CloseHandle(hndl);
 		
-		if (size != len)
-			cout << "process write " << len << " instead of " << size << endl;
-		
 		//TODO: restore previous privileges?
+		return len;
 	}
 	
-	void read(void *address, void *buff, SIZE_T size) {
+	SIZE_T read(void *address, void *buff, SIZE_T size) {
 		HANDLE hndl;
 		SIZE_T len;
 		
-		hndl = get_handle(PROCESS_VM_READ | PROCESS_QUERY_INFORMATION);
-		if (!ReadProcessMemory(hndl, address, buff, size, &len))
-			cout << "cant read memory of process " << this->pid << endl;
+		hndl = get_handle(PROCESS_VM_READ);
+		ReadProcessMemory(hndl, address, buff, size, &len);
 		CloseHandle(hndl);
-		
-		if (size != len)
-			cout << "process read " << len << " instead of " << size << endl;
-		
+			
+		return len;	  // 0 bytes read mean cant read that address, not paged
 	}
 	
 	char read_char(void *address) {
@@ -946,6 +1055,146 @@ public:
 	void write_pointer(void *address, void *pointer) {
 		write(address, &pointer, sizeof(void *));
 	}
+	
+	void write_string(void *address, string str) {
+		// write the null byte at the end or don't write it?
+		char *addr;
+		
+		addr = (char *)address;
+		
+		for (auto c: str) { 
+			this->write_char(addr, c);
+			addr++;	
+		}
+	}
+	
+	string read_string(void *address) {
+		char *addr = (char *)address;
+		char c;
+		string str = "";
+		
+		while (addr < (void *)END_ADDRESS) {
+			c = read_char(addr);
+			if (c == 0x00) {
+				break;
+			} else {
+				str += c;
+			}
+			addr ++;
+		}
+		
+		return str;
+	}
+	
+	string read_string_optimized(void *address) {
+		//TODO: implement this
+		string str = "";
+		char *page;
+		int nullpos;
+		BOOL found;
+		
+		if (!is_buffer(address, 1)) {
+			cout << "Invalid address, cant read a string" << endl;
+			return NULL;
+		}
+		
+		for (auto m : get_memory_map(address, 0)) {
+			if (m.State == MEM_COMMIT && !(m.Protect & PAGE_GUARD)) {
+				page = (char *)malloc(m.RegionSize);
+				this->read(m.BaseAddress, page, m.RegionSize);
+				for (nullpos=0; nullpos<m.RegionSize; nullpos++) {
+					if (page[nullpos] == 0x00) {
+						found = TRUE;
+						break;
+					}				
+				}
+				
+				if (found) {
+					str += string(page, nullpos);
+					free(page);
+					return str;
+				}
+			
+				str += string(page);
+				free(page);
+				
+				return str;
+			}
+		}
+		
+		return str;
+	}
+	
+	vector<MEMORY_BASIC_INFORMATION> get_memory_maps() {
+		return get_memory_map(0, 0);
+		
+		//TODO: create map object with getters for struct members.
+	}
+	
+	vector<MEMORY_BASIC_INFORMATION> get_memory_map(void *start_addr, void *end_addr) {
+		vector<MEMORY_BASIC_INFORMATION> map;
+		vector<DWORD64> range;
+		MEMORY_BASIC_INFORMATION mbi;
+		DWORD64 prev_addr, curr_addr, min_addr, max_addr;
+	
+		
+		range = MemoryAddresses::align_address_range((DWORD64)start_addr, (DWORD64)end_addr);
+		min_addr = range[0];
+		max_addr = range[1];
+		
+		prev_addr = 0;
+		curr_addr = min_addr;
+		
+		cout << curr_addr << " - " << max_addr << endl;
+		
+		while (curr_addr < max_addr) {
+			try {
+				mbi = mquery((void *)curr_addr);
+			} catch(...) {
+				break;
+			}
+			map.push_back(mbi);
+			
+			curr_addr = ((DWORD64)mbi.BaseAddress) + mbi.RegionSize;
+		}
+		
+		return map;
+	}
+	
+	BOOL is_buffer(void *address, SIZE_T size) {
+		MEMORY_BASIC_INFORMATION mbi;
+		BOOL has_content;
+		BOOL is_commited;
+		char *ptr = (char *)address;
+		
+		
+		if (size <= 0) {
+			cout << "is_buffer() bad size" << endl;
+			return FALSE;
+		}
+		
+		// TODO: optimize, there is no need to scan all the offsets sice we have the mbi.RegionSize
+		
+		for (int off=0; off<size; off++) {
+		
+			try {
+				mbi = mquery(ptr + off);
+			} catch(...) {
+				return FALSE;	
+			}
+			
+			is_commited = (mbi.State & MEM_COMMIT);
+			has_content = (is_commited && !(mbi.Protect & (PAGE_GUARD|PAGE_NOACCESS)));
+			
+			if (!has_content)
+				return FALSE;
+			
+		}
+		
+		return TRUE;		
+	}
+	
+	
 	
 	void free(void *address) {
 		HANDLE hndl;
@@ -1683,16 +1932,18 @@ public:
 	static const int running = 3;
 	
 	
-	Breakpoint(DWORD64 address) {
+	Breakpoint(DWORD64 address, bpcallback action) {
 		this->address = address;
-		state = Breakpoint::disabled;
+		this->state = Breakpoint::disabled;
+		this->action = action;
 		size = 1;
 	}
 	
-	Breakpoint(DWORD64 address, int size) {
+	Breakpoint(DWORD64 address, int size, bpcallback action) {
 		this->address = address;
 		this->state = Breakpoint::disabled;
 		this->size = size;
+		this->action = action;
 	}
 	
 	BOOL is_disabled() {
@@ -1799,16 +2050,125 @@ public:
 
 class CodeBreakpoint : public Breakpoint {
 protected:
+	char prev_value = '\xcc';
 	char instruction = '\xcc';
+	int instruction_sz = 1;
+	
 public:
+	string type_name = "code breakpoint";
 	
 	
+	void __set_bp(Process *p) {
+		this->prev_value = p->read_char(get_address());
+		if (prev_value == instruction) 
+			cout << "possible overlapping code breakpoint at " << get_address() << endl;
+		
+		p->write_char(get_address(), instruction);
+	}
 	
+	void __clear_bp(Process *p) {
+		char curr_value;
+		
+		curr_value = p->read_char(get_address());
+		if (curr_value == instruction) {
+			p->write_char(get_address(), prev_value);
+		} else {
+			prev_value = curr_value;
+			cout << "overwriten code breakpoint at " << get_address() << endl;
+			
+		}
+	}
 	
+	void do_disable(Process *p) {
+		if (!is_disabled() && !is_running())
+			__clear_bp(p);
+		
+		disable();
+	}
 	
+	void do_enable(Process *p) {
+		if (!is_enabled() && !is_one_shot()) 
+			__set_bp(p);
+		
+		enable();
+	}
+	
+	void do_one_shot(Process *p) {
+		if (!is_enabled() && !is_one_shot())
+			__set_bp(p)
+		
+		one_shot();
+	}
+	
+	void do_running(Process *p, Thread *t) {
+		if (is_enabled()) {
+			__clear_bp(p);
+			t->set_tf();
+		}
+		
+		running();
+	}
 	
 }; //  end CodeBreakpoint
 
+
+//// PageBreakpoint ////
+//TODO: refactor breakpoints
+
+class PageBreakpoint : public Breakpoint { 
+protected:
+	char prev_value = '\xcc';
+	char instruction = '\xcc';
+	int instruction_sz = 1;
+	
+public:
+	string type_name = "page breakpoint";
+	
+	void __set_bp(Process *p) {
+		int new_protect;
+		
+		auto m = p->mquery(get_address());
+		new_protect = m.Protect | PAGE_GUARD;
+		p->mprotect(get_address(), get_size(), new_protect);
+	}
+	
+	void __clear_bp(Process *p) {
+		int new_protect;
+		
+		auto m = p->mquery(get_address());
+		new_protect = m.Protect | (0xffffffff ^ PAGE_GUARD);
+		p->mprotect(get_address(), get_size(), new_protect);
+	}
+	
+	void do_disable(Process *p) {
+		if (!is_disabled() && !is_running())
+			__clear_bp(p);
+		
+		disable();
+	}
+	
+	void do_enable(Process *p) {
+		if (!is_enabled() && !is_one_shot()) 
+			__set_bp(p);
+		
+		enable();
+	}
+	
+	void do_one_shot(Process *p) {
+		if (!is_enabled() && !is_one_shot())
+			__set_bp(p)
+		
+		one_shot();
+	}
+	
+	void do_running(Process *p, Thread *t) {
+		t->set_tf();	
+		running();
+	}
+	
+	
+	
+}; // end PageBreakpoint
 
 
 //// Debug //// 
