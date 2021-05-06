@@ -2059,19 +2059,19 @@ public:
 	
 	
 	void __set_bp(Process *p) {
-		this->prev_value = p->read_char(get_address());
+		this->prev_value = p->read_char((void *)get_address());
 		if (prev_value == instruction) 
 			cout << "possible overlapping code breakpoint at " << get_address() << endl;
 		
-		p->write_char(get_address(), instruction);
+		p->write_char((void *)get_address(), instruction);
 	}
 	
 	void __clear_bp(Process *p) {
 		char curr_value;
 		
-		curr_value = p->read_char(get_address());
+		curr_value = p->read_char((void *)get_address());
 		if (curr_value == instruction) {
-			p->write_char(get_address(), prev_value);
+			p->write_char((void *)get_address(), prev_value);
 		} else {
 			prev_value = curr_value;
 			cout << "overwriten code breakpoint at " << get_address() << endl;
@@ -2095,7 +2095,7 @@ public:
 	
 	void do_one_shot(Process *p) {
 		if (!is_enabled() && !is_one_shot())
-			__set_bp(p)
+			__set_bp(p);
 		
 		one_shot();
 	}
@@ -2106,7 +2106,7 @@ public:
 			t->set_tf();
 		}
 		
-		running();
+		run();
 	}
 	
 }; //  end CodeBreakpoint
@@ -2127,21 +2127,21 @@ public:
 	void __set_bp(Process *p) {
 		int new_protect;
 		
-		auto m = p->mquery(get_address());
+		auto m = p->mquery((void *)get_address());
 		new_protect = m.Protect | PAGE_GUARD;
-		p->mprotect(get_address(), get_size(), new_protect);
+		p->mprotect((void *)get_address(), get_size(), new_protect);
 	}
 	
 	void __clear_bp(Process *p) {
 		int new_protect;
 		
-		auto m = p->mquery(get_address());
+		auto m = p->mquery((void *)get_address());
 		new_protect = m.Protect | (0xffffffff ^ PAGE_GUARD);
-		p->mprotect(get_address(), get_size(), new_protect);
+		p->mprotect((void *)get_address(), get_size(), new_protect);
 	}
 	
 	void do_disable(Process *p) {
-		if (!is_disabled() && !is_running())
+		if (!is_disabled())
 			__clear_bp(p);
 		
 		disable();
@@ -2156,16 +2156,15 @@ public:
 	
 	void do_one_shot(Process *p) {
 		if (!is_enabled() && !is_one_shot())
-			__set_bp(p)
+			__set_bp(p);
 		
 		one_shot();
 	}
 	
 	void do_running(Process *p, Thread *t) {
 		t->set_tf();	
-		running();
+		run();
 	}
-	
 	
 	
 }; // end PageBreakpoint
