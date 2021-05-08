@@ -366,6 +366,12 @@ public:
 		this->me = me;
 	}
 	
+	BOOL operator== (Module *m) {
+		if (this->get_base() == m->get_base() && this->get_name_string() == m->get_name_string())
+			return TRUE;
+		return FALSE;
+	}
+	
 	DWORD64 get_base() {
 		return (DWORD64)me.modBaseAddr;
 	}
@@ -391,6 +397,11 @@ public:
 	
 	char *get_name() {
 		return me.szModule;
+	}
+	
+	string get_name_string() {
+		string str(me.szModule);
+		return str;
 	}
 	
 	HANDLE get_handle() {
@@ -560,8 +571,26 @@ public:
 		return this->pid;
 	}
 	
+	vector<DWORD> get_tids() {
+		vector<DWORD> tids;
+		
+		for (auto t : threads) 
+			tids.push_back(t->get_tid());
+		
+		return tids;
+	}
+	
 	vector<Thread *> get_threads() {
 		return threads;
+	}
+	
+	Module *get_module_at_address(DWORD64 address) {
+		for (auto module : modules) {
+			if (module->get_base() == address) {
+				return module;
+			}
+		}
+		return NULL;
 	}
 	
 	Thread *get_thread(DWORD tid) {
@@ -1997,6 +2026,7 @@ protected:
 	int state;
 	int size;
 	bpcallback action = NULL;
+	BOOL condition;
 	
 public:
 	static const int DISABLED = 0;
@@ -2005,18 +2035,25 @@ public:
 	static const int RUNNING = 3;
 	
 	
-	Breakpoint(DWORD64 address, bpcallback action) {
+	
+	Breakpoint(DWORD64 address, BOOL condition, bpcallback action) {
 		this->address = address;
 		this->state = Breakpoint::DISABLED;
 		this->action = action;
 		size = 1;
 	}
 	
-	Breakpoint(DWORD64 address, int size, bpcallback action) {
+	Breakpoint(DWORD64 address, int size, BOOL condition, bpcallback action) {
 		this->address = address;
 		this->state = Breakpoint::DISABLED;
 		this->size = size;
 		this->action = action;
+	}
+	
+	BOOL operator== (Breakpoint *bp) {
+		if (this->get_address() == bp->get_address())
+			return TRUE;
+		return FALSE;
 	}
 	
 	BOOL is_disabled() {
@@ -2130,6 +2167,8 @@ protected:
 public:
 	string type_name = "code breakpoint";
 	
+	CodeBreakpoint(DWORD64 address, BOOL condition, bpcallback action) : Breakpoint(address, condition, action) {
+	}
 	
 	void __set_bp(Process *p) {
 		this->prev_value = p->read_char((void *)get_address());
@@ -2196,6 +2235,9 @@ protected:
 	
 public:
 	string type_name = "page breakpoint";
+	
+	PageBreakpoint(DWORD64 address, BOOL condition, bpcallback action) : Breakpoint(address, condition, action) {
+	}
 	
 	void __set_bp(Process *p) {
 		int new_protect;
@@ -2462,7 +2504,7 @@ public:
 
 //// HardwareBreakpoint ////
 
-class HardwareBreakpoint : Breakpoint {
+class HardwareBreakpoint : public Breakpoint {
 protected:	
 	int valid_triggers[3] = {
 		BREAK_ON_EXECUTION,
@@ -2493,6 +2535,9 @@ public:
 	
 	
 	string type_name = "hardware breakpoint";
+	
+	HardwareBreakpoint(DWORD64 address, BOOL condition, bpcallback action) : Breakpoint(address, condition, action) {
+	}
 	
 	//TODO: implement conditions in all breakpoints
 	
@@ -2628,6 +2673,23 @@ private:
 	map<DWORD, vector<T>> bps;
 	
 public:
+	
+	map<DWORD, vector<T>> get_map() {
+		return bps;
+	}
+	
+	vector<DWORD> get_keys() {
+		vector<DWORD> keys;
+		
+		auto pos = bps.begin();
+		while (pos != bps.end()) {
+			keys.push_back(pos->first);
+			pos++;
+		}
+		
+		return keys;
+	}
+	
 	BOOL contains(DWORD tid) {
 		auto pos = bps.find(tid);
 		if (pos == bps.end()) 
@@ -2635,7 +2697,20 @@ public:
 		return TRUE;
 	}
 	
-	vector<T>get_bps(DWORD tid) {
+	BOOL contains(DWORD tid, T bp) {
+		if (!contains(tid))
+			return FALSE;
+		
+		for (int i=0; i<bps[tid].size(); i++) {
+			if (bps[tid][i] == bp) {
+				return TRUE;
+			}
+		}
+		
+		return FALSE;	
+	}
+	
+	vector<T>get_items(DWORD tid) {
 		return bps[tid];
 	}
 	
@@ -2655,7 +2730,7 @@ public:
 	
 	void erase(DWORD tid, T bp) {
 		for (int i=0; i<bps[tid].size(); i++) {
-			if (bps[tid][i]->get_address() == bp->get_address()) {
+			if (bps[tid][i] == bp) { //TODO: use operator== instead of addres
 				delete bps[tid][i];
 				bps[tid].erase(bps[tid].begin()+i);
 				break;
@@ -3059,15 +3134,15 @@ public:
 	}*/
 	
 	void _notify_create_process(Event *event) {
-		
+		//TODO: implement
 	}
 	
 	void disable_process_breakpoints(int pid) {
-		
+		//TODO: implement
 	}
 	
 	void disable_thread_breakpoints(int tid) {
-		
+		//TODO: implement
 	}
 	
 	void kill_all() {
@@ -3085,13 +3160,13 @@ public:
 	
 	//// bp cointainer ////
 
-protected:	
-    vector<CodeBreakpoint *> code_bp;
-    vector<PageBreakpoint *> page_bp;
+protected:
+    Box<CodeBreakpoint *> code_bp;
+    Box<PageBreakpoint *> page_bp;
     Box<HardwareBreakpoint *> hardware_bp;
     Box<Breakpoint *> running_bp;
     vector<DWORD> tracing;
-    vector<DWORD> deferred_bp;
+    Box<Breakpoint *> deferred_bp;
     
 	void __cleanup_breakpoint(Event *ev, Breakpoint *bp) {
 		bp->disable();
@@ -3106,14 +3181,91 @@ protected:
 		
 		BOOL found = FALSE;
 		
-		auto pos = tracing.find(tid);
-		if (pos != tracing.end())
-			tracing.erase(pos);
+		for (int i=0; i<tracing.size(); i++) {
+			if (tracing[i] == tid) {
+				tracing.erase(tracing.begin()+i);
+				break;
+			}
+		}
 	}
-
+	
+	void __cleanup_process(Event *ev) {
+		auto pid = ev->get_pid();
+		
+		code_bp.erase(pid);
+		page_bp.erase(pid);
+		
+		deferred_bp.erase(pid);		
+	}
+	
+	void __cleanup_module(Event *ev, Module *module) {
+		auto pid = ev->get_pid();
+		auto process = ev->get_process();
+		//auto module = ev->get_module();
+		
+		// cleanup thread breakpoints on this module
+		for (auto tid : process->get_tids()) {
+			
+			// running breakpoints
+			if (running_bp.contains(tid)) {
+				for (auto bp : running_bp.get_items(tid)) {
+					auto addr = bp->get_address();
+					
+					if (process->get_module_at_address(addr) == module) {
+						__cleanup_breakpoint(ev, bp);
+						running_bp.erase(tid, bp);
+					}
+					
+				}
+			}
+			
+			// hardware breakpoints
+			if (hardware_bp.contains(tid)) {
+				for (auto bp : hardware_bp.get_items(tid)) {
+					auto addr = bp->get_address();
+					
+					if (process->get_module_at_address(addr) == module) {
+						__cleanup_breakpoint(ev, bp);
+						hardware_bp.erase(tid, bp);
+					}
+				}
+			}
+		}
+		
+		// cleanup code breakpoints on this module
+		for (auto bp_pid: code_bp.get_keys()) {
+			if (bp_pid == pid) {
+				
+				for (auto bp: code_bp.get_items(pid)) {
+					auto addr = bp->get_address();
+					
+					if (process->get_module_at_address(addr) == module) {
+						code_bp.erase(pid, bp);
+					}
+				}
+			}
+		}
+		
+		// cleanup page breakpoints on this module
+		for (auto bp_pid: page_bp.get_keys()) {
+			if (bp_pid == pid) {
+				
+				for (auto bp: page_bp.get_items(pid)) {
+					auto addr = bp->get_address();
+					
+					if (process->get_module_at_address(addr) == module) 
+						page_bp.erase(pid, bp);
+				}
+			}
+		}
+	}
 
 public:
 	
+	void define_code_breakpoint(int pid, DWORD64 address, BOOL condition, bpcallback action) {
+		CodeBreakpoint *bp = new CodeBreakpoint(address, condition, action);
+		
+	}
 	
 };
 
