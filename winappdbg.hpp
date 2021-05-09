@@ -46,6 +46,7 @@ System --->	Process -> threads --> Thread
 #include <shlobj.h>
 #include <winver.h>
 #include <winbase.h>
+#include <math.h>
 #include <psapi.h>
 #include <iostream>
 #include <vector>
@@ -138,6 +139,10 @@ public:
 	
 	int get_tid() {
 		return tid;
+	}
+	
+	DWORD get_pid() {
+		return pid;
 	}
 	
 	HANDLE get_handle() {
@@ -255,6 +260,14 @@ public:
 		set_context(ctx); 
 	}
 	
+	void clear_flags(DWORD flags) {
+		CONTEXT ctx;
+		
+		ctx = get_context();
+		ctx.EFlags &= ~flags;
+		set_context(ctx); 
+	}
+	
 	DWORD get_flags_mask(DWORD mask) {
 		CONTEXT ctx;
 		
@@ -270,12 +283,20 @@ public:
 		set_flags(overflow);
 	}
 	
+	void clear_flags_overflow() {
+		clear_flags(overflow);
+	}
+	
 	DWORD get_flags_direction() {
 		return get_flags_mask(direction);
 	}
 		
 	void set_flags_direction() {
 		set_flags(direction);
+	}
+	
+	void clear_flags_direction() {
+		clear_flags(direction);
 	}
 	
 	DWORD get_flags_interrupts() {
@@ -286,12 +307,20 @@ public:
 		set_flags(interrupts);
 	}
 	
+	void clear_flags_interrupts() {
+		clear_flags(interrupts);
+	}
+	
 	DWORD get_flags_trap() {
 		return get_flags_mask(trap);
 	}
 	
 	void set_flags_trap() {
 		set_flags(trap);
+	}
+	
+	void clear_flags_trap() {
+		clear_flags(trap);
 	}
 	
 	DWORD get_flags_sign() {
@@ -302,12 +331,20 @@ public:
 		set_flags(sign);
 	}
 	
+	void clear_flags_sign() {
+		clear_flags(sign);
+	}
+	
 	DWORD get_flags_zero() {
 		return get_flags_mask(zero);
 	}
 	
 	void set_flags_zero() {
 		set_flags(zero);
+	}
+	
+	void clear_flags_zero() {
+		clear_flags(zero);
 	}
 	
 	DWORD get_flags_auxiliary() {
@@ -318,6 +355,10 @@ public:
 		set_flags(auxiliary);
 	}
 	
+	void clear_flags_auxiliary() {
+		clear_flags(auxiliary);
+	}
+	
 	DWORD get_flags_parity() {
 		return get_flags_mask(parity);
 	}
@@ -326,12 +367,20 @@ public:
 		set_flags(parity);
 	}
 	
+	void clear_flags_parity() {
+		clear_flags(parity);
+	}
+	
 	DWORD get_flags_carry() {
 		return get_flags_mask(carry);
 	}
 	
 	void set_flags_carry() {
 		set_flags(carry);
+	}
+	
+	void clear_flags_carry() {
+		clear_flags(carry);
 	}
 	
 	BOOL is_hidden() {
@@ -1944,6 +1993,22 @@ public:
 		return processes;
 	}
 	
+	Process *get_process(DWORD pid) {
+		for (auto proc : processes) {
+			if (proc->get_pid() == pid)
+				return proc;
+		}
+		return NULL;
+	}
+	
+	Thread *get_thread(DWORD tid) {
+		for (auto proc : processes) {
+			auto t = proc->get_thread(tid);
+			return t;
+		}
+		return NULL;
+	}
+	
 }; // end System
 
 class Event {
@@ -2027,6 +2092,8 @@ protected:
 	int size;
 	bpcallback action = NULL;
 	BOOL condition;
+	DWORD pid = 0;
+	DWORD tid = 0;
 	
 public:
 	static const int DISABLED = 0;
@@ -2049,12 +2116,32 @@ public:
 		this->size = size;
 		this->action = action;
 	}
-	
+		
 	BOOL operator== (Breakpoint *bp) {
-		if (this->get_address() == bp->get_address())
+		if (get_address() == bp->get_address() && 
+			get_pid() == bp->get_pid() &&
+			get_tid() == bp->get_tid()) 
 			return TRUE;
 		return FALSE;
 	}
+	
+	void set_pid(DWORD pid) {
+		this->pid = pid;
+	}
+	
+	void set_tid(DWORD tid) {
+		this->tid = tid;
+	}
+	
+	DWORD get_pid() {
+		return pid;
+	}
+	
+	DWORD get_tid() {
+		return tid;
+	}
+	
+	
 	
 	BOOL is_disabled() {
 		if (state == Breakpoint::DISABLED) 
@@ -2232,11 +2319,21 @@ protected:
 	char prev_value = '\xcc';
 	char instruction = '\xcc';
 	int instruction_sz = 1;
+	float floordiv_align;
+	float truediv_align;
 	
 public:
 	string type_name = "page breakpoint";
 	
-	PageBreakpoint(DWORD64 address, BOOL condition, bpcallback action) : Breakpoint(address, condition, action) {
+	//TODO: optimize cache page_size()
+	
+	PageBreakpoint(DWORD64 address, int pages, BOOL condition, bpcallback action) : Breakpoint(address, pages * MemoryAddresses::page_size(), condition, action) {
+		floordiv_align = floor(address / MemoryAddresses::page_size());
+		truediv_align = address /  MemoryAddresses::page_size();
+	}
+	
+	int get_size_in_pages() {
+		return floor(get_size() / MemoryAddresses::page_size());
 	}
 	
 	void __set_bp(Process *p) {
@@ -2632,7 +2729,7 @@ public:
 		return __watch;
 	}
 	
-	void do_disable(Thread* t) {
+	void do_disable(Thread *t) {
 		if (!is_disabled()) 
 			__clear_bp(t);
 		
@@ -2670,19 +2767,19 @@ public:
 template <typename T>
 class Box {
 private:
-	map<DWORD, vector<T>> bps;
+	map<DWORD, vector<T>> db;
 	
 public:
 	
 	map<DWORD, vector<T>> get_map() {
-		return bps;
+		return db;
 	}
 	
 	vector<DWORD> get_keys() {
 		vector<DWORD> keys;
 		
-		auto pos = bps.begin();
-		while (pos != bps.end()) {
+		auto pos = db.begin();
+		while (pos != db.end()) {
 			keys.push_back(pos->first);
 			pos++;
 		}
@@ -2691,8 +2788,8 @@ public:
 	}
 	
 	BOOL contains(DWORD tid) {
-		auto pos = bps.find(tid);
-		if (pos == bps.end()) 
+		auto pos = db.find(tid);
+		if (pos == db.end()) 
 			return FALSE;
 		return TRUE;
 	}
@@ -2701,8 +2798,8 @@ public:
 		if (!contains(tid))
 			return FALSE;
 		
-		for (int i=0; i<bps[tid].size(); i++) {
-			if (bps[tid][i] == bp) {
+		for (int i=0; i<db[tid].size(); i++) {
+			if (db[tid][i] == bp) {
 				return TRUE;
 			}
 		}
@@ -2710,37 +2807,58 @@ public:
 		return FALSE;	
 	}
 	
+	BOOL contains(DWORD tid, DWORD64 addr) {
+		if (!contains(tid))
+			return FALSE;
+		
+		for (int i=0; i<db[tid].size(); i++) {
+			if (db[tid][i]->get_address() == addr) {
+				return TRUE;
+			}
+		}
+		
+		return FALSE;
+	}
+	
 	vector<T>get_items(DWORD tid) {
-		return bps[tid];
+		return db[tid];
+	}
+	
+	T get_item_by_address(DWORD tid, DWORD64 address) {
+		for (auto bp : db[tid])	{
+			if (bp->get_address() == address) 
+				return bp;
+		}
+		return NULL;
 	}
 	
 	void insert(DWORD tid, T bp) {
 		if (contains(tid)) {
 			vector<T> vbp;
-			bps.insert( pair<DWORD, vector<T>>(tid, vbp) );
+			db.insert( pair<DWORD, vector<T>>(tid, vbp) );
 		}
-		bps[tid].push_back(bp);
+		db[tid].push_back(bp);
 	}
 	
 	void erase(DWORD tid) {
-		for (int i=0; i<bps[tid].size(); i++)
-			delete bps[tid][i];
-		bps.erase(tid);
+		for (int i=0; i<db[tid].size(); i++)
+			delete db[tid][i];
+		db.erase(tid);
 	}
 	
 	void erase(DWORD tid, T bp) {
-		for (int i=0; i<bps[tid].size(); i++) {
-			if (bps[tid][i] == bp) { //TODO: use operator== instead of addres
-				delete bps[tid][i];
-				bps[tid].erase(bps[tid].begin()+i);
+		for (int i=0; i<db[tid].size(); i++) {
+			if (db[tid][i] == bp) { 
+				delete db[tid][i];
+				db[tid].erase(db[tid].begin()+i);
 				break;
 			}
 		}
 	}
 	
 	void show() {
-		auto pos = bps.begin();
-		while (pos != bps.end()) {
+		auto pos = db.begin();
+		while (pos != db.end()) {
 			auto tid = pos->first;
 			auto vecbp = pos->second;
 			
@@ -2750,7 +2868,71 @@ public:
 			pos++;
 		}
 	}
-};
+}; // end Box
+
+template <typename T>
+class Box2 {
+private:
+	map<pair<DWORD, DWORD64>, vector<T>> db;
+	
+public:
+	map<pair<DWORD, DWORD64>, vector<T>> get_map() {
+		return db;
+	}
+	
+	vector<T> get_items(DWORD tid, DWORD64 addr) {
+		return db[pair<DWORD, DWORD64>(tid, addr)];
+	}
+	
+	BOOL contains(DWORD tid, DWORD64 addr) {
+		auto pos = db.find(pair<DWORD, DWORD64>(tid, addr));
+		if (pos == db.end()) 
+			return FALSE;
+		return TRUE;
+	}
+	
+	void insert(DWORD tid, DWORD64 addr, T bp) {
+		if (contains(tid, addr)) {
+			vector<T> vbp;
+			db.insert(make_pair(make_pair(tid,addr), vbp));
+		}
+		db[pair<DWORD,DWORD64>(tid,addr)].push_back(bp);
+	}
+	
+	void erase(DWORD tid) {
+		db.erase(tid);
+	}
+	
+	void erase(DWORD tid, DWORD64 addr) {
+		for (int i=0; i<db[make_pair(tid,addr)].size(); i++)
+			delete db[make_pair(tid,addr)][i];
+		db.erase(make_pair(tid,addr));
+	}
+	
+	void erase(DWORD tid, DWORD64 addr, T bp) {
+		for (int i=0; i<db[make_pair(tid,addr)].size(); i++) {
+			if (db[make_pair(tid,addr)][i] == bp) { 
+				delete db[make_pair(tid,addr)][i];
+				db[make_pair(tid,addr)].erase(db[make_pair(tid,addr)].begin()+i);
+				break;
+			}
+		}
+	}
+	
+	void show() {
+		auto pos = db.begin();
+		while (pos != db.end()) {
+			auto tid_addr = pos->first;
+			auto vecbp = pos->second;
+			
+			for (auto bp : vecbp) {				
+				cout << tid_addr->first << " " << tid_addr->second << " ->  0x" << hex << bp->get_address() << endl;		
+			}	
+			pos++;
+		}
+	}
+	
+}; // end Box2
 
 
 //// Debug //// 
@@ -3168,6 +3350,16 @@ protected:
     vector<DWORD> tracing;
     Box<Breakpoint *> deferred_bp;
     
+         
+    void __del_running_bp_from_all_threads(Breakpoint *bp) {
+    	for (auto tid : running_bp.get_keys()) {
+    		if (running_bp.contains(tid, bp)) {
+    			running_bp.erase(tid, bp);
+    			sys->get_thread(tid)->clear_flags_trap();
+			}
+		}
+	}
+    
 	void __cleanup_breakpoint(Event *ev, Breakpoint *bp) {
 		bp->disable();
 		bp->set_action(NULL);
@@ -3259,13 +3451,354 @@ protected:
 			}
 		}
 	}
+	
+	
 
 public:
 	
-	void define_code_breakpoint(int pid, DWORD64 address, BOOL condition, bpcallback action) {
+	CodeBreakpoint *define_code_breakpoint(int pid, DWORD64 address, BOOL condition, bpcallback action) {
 		CodeBreakpoint *bp = new CodeBreakpoint(address, condition, action);
+		bp->set_pid(pid);
 		
+		if (code_bp.contains(pid, bp)) {
+			cout << "already exists the code breakpoint " << endl;
+			delete bp;
+			return NULL;
+		}
+		
+		code_bp.insert(pid, bp);
+		
+		return bp;
 	}
 	
+	PageBreakpoint *define_page_breakpoint(int pid, DWORD64 address, int pages, BOOL condition, bpcallback action) {
+		PageBreakpoint *bp = new PageBreakpoint(address, pages, condition, action);
+		bp->set_pid(pid);
+		
+		if (page_bp.contains(pid, bp)) {
+			cout << "already exists page breakpoint" << endl;
+			delete bp;
+			return NULL;
+		}
+		
+		page_bp.insert(pid, bp);
+		
+		return bp;
+	}
+	
+	HardwareBreakpoint *define_hardware_breakpoint(DWORD tid, DWORD64 address, int trigger_flag, int size_flag, BOOL condition, bpcallback action) {
+		HardwareBreakpoint *bp = new HardwareBreakpoint(address, condition, action);
+		bp->config(trigger_flag, size_flag);
+		bp->set_tid(tid);
+		bp->set_pid(sys->get_thread(tid)->get_pid());
+		
+		auto begin = bp->get_address();
+		auto end = begin + bp->get_size();
+		
+		if (hardware_bp.contains(tid)) {
+			for (auto old_bp : hardware_bp.get_items(tid)) {
+				auto old_begin = old_bp->get_address();
+				auto old_end = old_begin + old_bp->get_size();
+				if (MemoryAddresses::do_ranges_intersect(begin, end, old_begin, old_end)) {
+					cout << "already exists hardware breakpoint" << endl;
+					return NULL;
+				}
+			}
+		} else {
+			hardware_bp.insert(tid, bp);
+		}
+		
+		return bp;
+	}
+	
+	BOOL has_code_breakpoint(DWORD pid, DWORD64 address) {
+		return code_bp.contains(pid, address);
+	}
+	
+	BOOL has_page_breakpoint(DWORD pid, DWORD64 address) {
+		return page_bp.contains(pid, address);
+	}
+	
+	BOOL has_hardware_breakpoint(DWORD tid, DWORD64 address) {
+		return hardware_bp.contains(tid, address);
+	}
+	
+	CodeBreakpoint *get_code_breakpoint(DWORD pid, DWORD64 address) {
+		if (!code_bp.contains(pid, address)) {
+			cout << "no breakpoint at process " << pid << ", address: " << address << endl;
+			return NULL;
+		}
+		
+		return code_bp.get_item_by_address(pid, address);
+	}
+	
+	PageBreakpoint *get_page_breakpoint(DWORD pid, DWORD64 address) {
+		if (!page_bp.contains(pid, address)) {
+			cout << "no breakpoint at process " << pid << ", address: " << address << endl;
+			return NULL;
+		}
+		
+		return page_bp.get_item_by_address(pid, address);
+	}
+	
+	HardwareBreakpoint *get_hardware_breakpoint(DWORD tid, DWORD64 address) {
+		if (!hardware_bp.contains(tid, address)) {
+			cout << "no hw breakpoint at thread " << tid << ", address: " << address << endl;
+			return NULL;
+		}
+		
+		return hardware_bp.get_item_by_address(pid, address);
+	}
+	
+	void enable_code_breakpoint(DWORD pid, DWORD64 address) {
+		auto proc = this->sys->get_process(pid);
+		auto bp = get_code_breakpoint(pid, address);
+		if (bp->is_running()) {
+			__del_running_bp_from_all_threads(bp);
+		}
+		
+		bp->do_enable(proc);
+	}
+	
+	void enable_page_breakpoint(DWORD pid, DWORD64 address) {
+		auto proc = this->sys->get_process(pid);
+		auto bp = get_page_breakpoint(pid, address);
+		if (bp->is_running()) {
+			__del_running_bp_from_all_threads(bp);
+		}
+		
+		bp->do_enable(proc);
+	}
+	
+	void enable_hardware_breakpoint(DWORD tid, DWORD64 address) {
+		auto t = this->sys->get_thread(tid);
+		auto bp = get_hardware_breakpoint(tid, address);
+		if (bp->is_running()) {
+			__del_running_bp_from_all_threads(bp);
+		}
+		
+		bp->do_enable(t);
+	}
+	
+	void enable_one_shot_code_breakpoint(DWORD pid, DWORD64 address) {
+		auto proc = this->sys->get_process(pid);
+		auto bp = get_code_breakpoint(pid, address);
+		if (bp->is_running()) {
+			__del_running_bp_from_all_threads(bp);
+		}
+		
+		bp->do_one_shot(proc);
+	}
+	
+	void enable_one_shot_page_breakpoint(DWORD pid, DWORD64 address) {
+		auto proc = this->sys->get_process(pid);
+		auto bp = get_page_breakpoint(pid, address);
+		if (bp->is_running()) {
+			__del_running_bp_from_all_threads(bp);
+		}
+		
+		bp->do_one_shot(proc);
+	}
+	
+	void enable_one_shot_hardware_breakpoint(DWORD tid, DWORD64 address) {
+		auto t = this->sys->get_thread(pid);
+		auto bp = get_hardware_breakpoint(pid, address);
+		if (bp->is_running()) {
+			__del_running_bp_from_all_threads(bp);
+		}
+		
+		bp->do_one_shot(t);
+	}
+	
+	void disable_code_breakpoint(DWORD pid, DWORD64 address) {
+		auto proc = this->sys->get_process(pid);
+		auto bp = get_code_breakpoint(pid, address);
+		if (bp->is_running()) {
+			__del_running_bp_from_all_threads(bp);
+		}
+		
+		bp->do_disable(proc);
+	}
+	
+	void disable_page_breakpoint(DWORD pid, DWORD64 address) {
+		auto proc = this->sys->get_process(pid);
+		auto bp = get_page_breakpoint(pid, address);
+		if (bp->is_running()) {
+			__del_running_bp_from_all_threads(bp);
+		}
+		
+		bp->do_disable(proc);
+	}
+	
+	void disable_hardware_breakpoint(DWORD tid, DWORD64 address) {
+		auto t = this->sys->get_thread(tid);
+		auto bp = get_hardware_breakpoint(pid, address);
+		if (bp->is_running()) {
+			__del_running_bp_from_all_threads(bp);
+		}
+		
+		bp->do_disable(t);
+	}
+	
+	void erase_code_breakpoint(DWORD pid, DWORD64 address) {
+		auto bp = get_code_breakpoint(pid, address);
+		if (!bp->is_disabled()) 
+			disable_code_breakpoint(pid, address);
+			
+		code_bp.erase(pid, bp);
+	}
+	
+	void erase_page_breakpoint(DWORD pid, DWORD64 address) {
+		auto bp = get_page_breakpoint(pid, address);
+		if (!bp->is_disabled())
+			disable_page_breakpoint(pid, address);
+		
+		page_bp.erase(pid, bp);
+	}
+	
+	void erase_hardware_breakpoint(DWORD tid, DWORD64 address) {
+		auto bp = get_hardware_breakpoint(tid, address);
+		if (!bp->is_disabled())
+			disable_hardware_breakpoint(tid, address);
+			
+		hardware_bp.erase(tid, bp);
+	}
+	
+	vector<Breakpoint *> get_all_breakpoints() {
+		vector<Breakpoint *> bp_list;
+		
+		for (auto pid : code_bp.get_keys()) {
+			for (auto bp : code_bp.get_items(pid)) {
+				bp_list.push_back(bp);
+			}
+		}
+		
+		for (auto pid : page_bp.get_keys()) {
+			for (auto bp : page_bp.get_items(pid)) {
+				bp_list.push_back(bp);
+			}
+		}
+	
+		for (auto tid : hardware_bp.get_keys()) {
+			for (auto bp : hardware_bp.get_items(tid)) {
+				bp_list.push_back(bp);
+			}
+		}
+	
+		return bp_list;	
+	}
+	
+	vector<Breakpoint *> get_process_breakpoints(DWORD pid) {
+		vector<Breakpoint *> bp_list;
+		
+
+		for (auto bp : code_bp.get_items(pid)) {
+			bp_list.push_back(bp);
+		}
+
+		for (auto bp : page_bp.get_items(pid)) {
+			bp_list.push_back(bp);
+		}
+
+		for (auto tid : hardware_bp.get_keys()) {
+			for (auto bp : page_bp.get_items(tid)) {
+				if (bp->get_pid() == pid)
+					bp_list.push_back(bp);
+			}
+		}
+		
+		return bp_list;
+	}
+	
+	vector<Breakpoint *> get_process_code_breakpoints(DWORD pid) {
+		vector<Breakpoint *> bp_list;
+		
+		for (auto bp : code_bp.get_items(pid)) {
+			bp_list.push_back(bp);
+		}
+		
+		return bp_list;
+	}
+	
+	vector<Breakpoint *> get_process_page_breakpoints(DWORD pid) {
+		vector<Breakpoint *> bp_list;
+		
+		for (auto bp : page_bp.get_items(pid)) {
+			bp_list.push_back(bp);
+		}
+		
+		return bp_list;
+	}
+	
+	vector<Breakpoint *> get_thread_hardware_breakpoints(DWORD tid) {
+		vector<Breakpoint *> bp_list;
+		
+		for (auto bp : hardware_bp.get_items(tid)) {
+			bp_list.push_back(bp);
+		}
+		
+		return bp_list;
+	}
+	
+	vector<Breakpoint *> get_process_hardware_breakpoints(DWORD pid) {
+		vector<Breakpoint *> bp_list;
+		
+		for (auto tid : hardware_bp.get_keys()) {
+			for (auto bp : hardware_bp.get_items(tid)) {
+				if (bp->get_pid() == pid)
+					bp_list.push_back(bp);
+			}
+		}
+		
+		return bp_list;
+	}
+	
+	void enable_all_breakpoints() {
+		
+		for (auto pid : code_bp.get_keys()) {
+			for (auto bp : code_bp.get_items(pid)) {
+				if (bp->is_disabled())
+					enable_code_breakpoint(pid, bp->get_address());
+			}
+		}
+
+		for (auto pid : page_bp.get_keys()) {
+			for (auto bp : page_bp.get_items(pid)) {
+				if (bp->is_disabled())
+					enable_page_breakpoint(pid, bp->get_address());
+			}
+		}
+
+		for (auto tid : hardware_bp.get_keys()) {
+			for (auto bp : hardware_bp.get_items(tid)) {
+				if (bp->is_disabled())	
+					enable_hardware_breakpoint(tid, bp->get_address());
+			}
+		}
+	}
+	
+	void enable_one_shot_all_breakpoints() {
+		
+		for (auto pid : code_bp.get_keys()) {
+			for (auto bp : code_bp.get_items(pid)) {
+				if (bp->is_disabled())
+					enable_one_shot_code_breakpoint(pid, bp->get_address());
+			}
+		}
+
+		for (auto pid : page_bp.get_keys()) {
+			for (auto bp : page_bp.get_items(pid)) {
+				if (bp->is_disabled())
+					enable_one_shot_page_breakpoint(pid, bp->get_address());
+			}
+		}
+
+		for (auto tid : hardware_bp.get_keys()) {
+			for (auto bp : hardware_bp.get_items(tid)) {
+				if (bp->is_disabled())	
+					enable_one_shot_hardware_breakpoint(tid, bp->get_address());
+			}
+		}
+	}
 };
 
