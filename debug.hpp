@@ -54,10 +54,10 @@ System --->	Process -> threads --> Thread
 #include <sstream>
 #include <map>
 
-#include "event.h"
-#include "breakpoint.h"
-#include "system.h"
-#include "process.h"
+#include "event.hpp"
+#include "breakpoint.hpp"
+#include "system.hpp"
+#include "process.hpp"
 
 using namespace std;
 

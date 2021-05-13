@@ -29,8 +29,9 @@
 #include <sstream>
 #include <map>
 
-#include "service.h"
-#incldue "process.h"
+#include "service.hpp"
+#include "process.hpp"
+#include "window.hpp"
 
 using namespace std;
 
@@ -379,6 +380,10 @@ public:
 			return t;
 		}
 		return NULL;
+	}
+	
+	void __add_process(Proces *proc) {
+		processes.push_back(proc);
 	}
 	
 }; // end System

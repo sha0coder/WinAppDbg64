@@ -29,7 +29,8 @@
 #include <sstream>
 #include <map>
 
-#include "thread.h"
+#include "thread.hpp"
+#include "module.hpp"
 
 using namespace std;
 
@@ -85,6 +86,10 @@ public:
 	         }
 	         CloseHandle(hSnapshot);
 	    }
+	}
+	
+	void __add_module(Module *module) {
+		this->modules.push_back(module);
 	}
 	
 	string get_name() {
@@ -585,7 +590,7 @@ public:
 		write(address, (void *)&value, sizeof(unsigned short));
 	}
 	
-	unsigned int read_uint(void *address) {
+	unsigned int read_unsigned_int(void *address) {
 		unsigned int value;
 		
 		read(address, (void *)&value, sizeof(unsigned int));
@@ -593,7 +598,7 @@ public:
 		return value;
 	}
 	
-	void write_uint(void *address, unsigned int value) {
+	void write_unsigned_int(void *address, unsigned int value) {
 		write(address, (void *)&value, sizeof(unsigned int));
 	}
 	
@@ -698,6 +703,7 @@ public:
 		
 		return str;
 	}
+	//TODO: implement unicode
 	
 	string read_string_optimized(void *address) {
 		//TODO: implement this

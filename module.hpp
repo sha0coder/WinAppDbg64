@@ -38,11 +38,31 @@ class Module {
 private:
 	int pid;
 	MODULEENTRY32 me;
+	FileHandle *hFile;
+	void *base_of_dll;
+	Process *proc;
+	string filename = "";
 	
 public:
 	Module(int pid, MODULEENTRY32 me) {
 		this->pid = pid;
 		this->me = me;
+	}
+	
+	Module(void *base_of_dll, FileHandle *hFile, string filename, Process *proc) {
+		//TODO: get the module entry
+		this->base_of_dll = base_of_dll;
+		this->hFile = hFile;
+		this->pid = proc->get_pid();
+		this->process = proc;
+		this->filename = filename;
+	}
+	
+	Module(void *base_of_dll, Process *proc) {
+		//TODO: get the module entry
+		this->base_of_dll = base_of_dll;
+		this->pid = proc->get_pid();
+		this->process = proc;
 	}
 	
 	BOOL operator== (Module *m) {
@@ -83,8 +103,16 @@ public:
 		return str;
 	}
 	
+	string get_filename() {
+		return filename;
+	}
+	
 	HANDLE get_handle() {
 		return me.hModule;
+	}
+	
+	FileHandle *get_file_handle() {
+		return this->hFile;
 	}
 	
 	DWORD64 load_symbols(HANDLE hProcess, char *pdb_filename) {

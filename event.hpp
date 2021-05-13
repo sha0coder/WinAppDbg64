@@ -19,26 +19,31 @@
 #include <map>
 #include <vector>
 
-#include "process.h"
+#include "process.hpp"
+#include "thread.hpp"
+#include "kernel.hpp"
 
+
+typedef bool (*callback)(Event *ev);
 
 //// EVENT /////
+
 
 class Event {
 protected:
 	Process *process;
+	Debugger *debug;
 	DEBUG_EVENT ev;
 	string name;
 	DWORD continue_status;
 	
 public:
-	Event(DEBUG_EVENT ev, Process *process) {
-		this->ev = ev;
-		this->process = process;
-	}
+	Hook *hook;
+	Breakpoint *breakpoint; //TODO: where is informed?
 	
-	~Event() {
-		delete process;
+	Event(Debugger *debug, DEBUG_EVENT ev) {
+		this->debug = debug;
+		this->ev = ev;
 	}
 	
 	string get_name() {
@@ -74,6 +79,17 @@ public:
 	}
 	
 	Process *get_process() {
+		auto pid = get_pid();
+		auto system = debug->system;
+		
+		if (system->has_process(pid)) {
+			auto proc = system->get_process(pid);
+			return proc;
+		}
+		
+		auto process = new Process(pid);
+		system->__add_process(process);
+		process->scan_modules();
 		return process;
 	}
 	
@@ -107,11 +123,290 @@ public:
 				return NULL;
 			}
 		
-		return new ThreadHandle(hThread, false, THREAD_ALL_ACCESS);
+		auto th = new ThreadHandle(hThread, false);
+		th->set_access(THREAD_ALL_ACCESS);
+		return th;
+	}
+	
+	void *get_teb() {
+		return ev.u.CreateThread.lpThreadLocalBase;
+	}
+	
+	void *get_start_address() {
+		return ev.u.CreateThread.lpStartAddress;
+	}
+	
+		
+}; // end CreateThreadEvent
+
+
+class CreateProcessEvent : public Event {
+public:
+	string event_method = "create_process";
+	string event_name = "Process creation event";
+	string event_description = "A new process has started";
+	
+	FileHandle *get_file_handle() {
+		auto hFile = ev.u.CreateProcessInfo.hFile;
+		if (hFile == 0 || hFile == NULL || hFile == INVALID_HANDLE_VALUE) 
+			return NULL;
+		
+		auto fh = new FileHandle(hFile, true);
+		return fh;
+	}
+	
+	ProcessHandle *get_process_handle() {
+		auto hProcess = ev.u.CreateProcessInfo.hProcess;
+		if (hProcess == 0 || hProcess == NULL || hProcess == INVALID_HANDLE_VALUE) 
+			return NULL;
+			
+		auto ph = new ProcessHandle(hProcess, false)
+		ph->set_access(PROCESS_ALL_ACCESS);
+		return ph;
+	}
+	
+	ThreadHandle *get_thread_handle() {
+		auto hThread = ev.u.CreateProcessInfo.hThread;
+		if (hThread == 0 || hThread == NULL || hThread == INVALID_HANDLE_VALUE) 
+			return NULL;
+		
+		auto th = new ThreadHandle(hThread, false);
+		th->set_access(THREAD_ALL_ACCESS);
+	}
+	
+	void *get_start_address() {
+		return ev.u.CreateProcessInfo.lpStartAddress;
+	}
+	
+	void *get_image_base() {
+		return ev.u.CreateProcessInfo.lpBaseOfImage;
+	}
+	
+	void *get_teb() {
+		return ev.u.CreateProcessInfo.lpThreadLocalBase;
+	}
+	
+	string get_debug_info() {
+		auto raw = ev.u.CreateProcessInfo;
+		auto ptr = raw.lpBaseOfImage + raw.dwDebugInfoFileOffset;
+		auto sz = raw.nDebugInfoSize;
+		
+		char *buff = malloc(sz);
+		get_process()->read(ptr, buff, sz);
+		
+		string str(buff, strlen(buff));
+		free(buff);
+		return str;
+	}
+	
+	string get_filename() {
+		auto hFile = get_file_handle();
+		if (hFile != NULL) {
+			filename = hFile.get_filename(); 
+			if (!filename.empty())
+				return filename;
+		}
+		
+		auto proc = get_process();
+		auto lpRemoteFilenamePtr = ev.u.CreateProcesInfo.lpImageName;
+		if (lpRemoteFilenamePtr) {
+			auto lpFilename = proc->read_pointer(lpRemoteFilenamePtr);
+			bool bUnicode = (ev.u.CreateProcessInfo.fUnicode?true:false);
+			auto szFilename = proc->read_string(lpFilename); //TODO: implement unicode
+			return szFileName;
+		}
+		
+		string str;
+		return str;
+	}
+	
+	void *get_module_base() {
+		return get_image_base();
+	}
+	
+}; // end CreateProcessEvent
+
+class ExitThreadEvent : public Event {
+public:
+	string event_method = "exit_thread";
+	string event_name = "Thead termination event";
+	string event_description = "A thread has finished executing.";
+	
+	DWORD get_exit_code() {
+		return ev.u.ExitThread.dwExitCode;
+	}
+		
+}; // end ExitThreadEvent
+
+
+class ExitProcessEvent : public Event {
+public:
+	string event_method = "exit_process";
+	string event_name = "Process termination event";
+	string event_description = "A process has finished executing.";
+	
+	DWORD get_exit_code() {
+		return ev.u.ExitProcess.dwExitCode;
+	}
+	
+	string get_filename() {
+		get_module()->get_filename(); //TODO: implement get_filename on module
+	}
+	
+	void *get_image_base() {
+		return get_module_base();
+	}
+	
+	Module *get_module() {
+		return get_process()->get_main_module();
+	}
+	
+}; // end ExitProcessEvent
+
+
+class LoadDLLEvent : public Event {
+public:
+	string event_method = "load_dll";
+	string event_name = "Module load event";
+	string event_description = "A new DLL library was loaded by the debugee";
+	
+	void *get_module_base() {
+		return ev.u.LoadDll.lpBaseOfDll;
+	}
+	
+	Module *get_module() {
+		Module *module = NULL;
+		auto lpBaseOfDll = get_module_base();
+		auto proc = get_process();
+		
+		
+		if (proc->has_module(lpBaseOfDll)) {
+			module = proc->get_module(lpBaseOfDll);
+		} else {
+			
+			module = new Module(lpBaseOfDll, get_file_handle(), get_file_name(), proc);
+			proc->__add_module(module);
+		}
+		 
+		return module;
+	}
+	
+	HANDLE get_file_handle() {
+		auto hFile = ev.u.LoadDll.hFile;
+		FileHandle fh;
+		
+		if (hFile == 0 || hFile == NULL || hFile == INVALID_HANDLE_VALUE) {
+			hFile = NULL;
+		} else {
+			fh = new FileHandle(hFile, true);
+		}
+		
+		this.__hFile = fh;
+		return fh;
+	}
+	
+	string get_file_name() {
+		auto proc = get_process();
+		auto lpRemoteFilenamePtr = ev.u.LoadDll.lpImageName;
+		if (lpRemoteFilenamePtr) {
+			auto lpFilename = proc->read_pointer(lpRemoteFilenamePtr);
+			auto fUnicode = (ev.u.LoadDll.fUnicode?true:false);
+			auto szFilename = proc->read_string(lpFilename);
+			
+			if (!szFilename.empty())
+				return szFilename;
+		}
+		
+		return get_file_handle()->get_filename();	
+	}
+	
+}; // end LoadDLLEvent
+
+
+class UnloadDLLEvent : public Event {
+public:
+	string event_method = "unload_dll";
+	string event_name = "Module unload event";
+	string event_description = "A DLL library was unloaded by the debugee.";
+	
+	void *get_module_base() {
+		ev.u.UnloadDll.lpBaseOfDll;
+	}
+	
+	Module *get_module() {
+		auto lpBaseOfDll = get_module_base();
+		auto proc = get_process();
+		if (proc->has_module(lpBaseOfDll)) {
+			auto module = proc->get_module(lpBaseOfDll);
+			return module;
+		}
+		
+		auto module = new Module(lpBaseOfDll, proc);
+		proc->__add_module(module);
+		
+		return module;
+	}
+	
+	HANDLE get_file_handle() {
+		//TODO: weird things, is the handle or the FileHandle, there is a duplicated flow
+		auto hFile = get_module()->get_handle();
+		if (hFile == 0 || hFile == NULL || hFile == INVALID_FILE_HANDLE)
+			return NULL;
+		return hFile;
+	}
+	
+	string get_filename() {
+		auto module = get_module();
+		auto name = module->get_name_string();
+		if (name.empty() == 0) 
+			return module->get_filename()
+		
+		return name;
 	}
 	
 	
-}; // end CreateThreadEvent
+}; // end UnloadDLLEvent
+
+
+class OutputDebugStringEvent : public Event {
+public:
+	string event_method = "output_string";
+	string event_name = "Debug string output event";
+	string event_description = "The debugee sent a message to the debugger.";
+	
+	string get_debug_string() {
+		auto addr = ev.u.DebugString.lpDebugStringData;
+		auto unicode = (ev.u.DebugString.fUnicode?true:false);
+		auto sz = ev.u.DebugString.nDebugStringLength;
+		
+		char *buff = (char *)malloc(sz);
+		get_process()->read(addr, buff, sz);
+		string str(buff, strlen(buff));
+		free(buff);
+		return str;
+	}
+	
+	
+}; // end OutputDebugStringEvent
+
+
+class RIPEvent : public Event {
+public:
+	string event_method = "rip";
+	string event_name = "RIP event";
+	string event_description = "An error has occurred and the process can not be debugged.";
+	
+	DWORD get_rip_error() {
+		return ev.u.RipInfo.dwError;
+	}
+	
+	DWORD get_rip_type() {
+		return ev.u.RipInfo.dwType;
+	}
+
+
+}; // end RIPEvent
+
 
 
 //// ExceptionEvent //// 
@@ -408,4 +703,21 @@ public:
 
 }; // end ExceptionEvent
 
+
+
+
+
+class EventHandler {
+protected:
+	map<??> api_hooks;
+	
+public:
+	EventHandler() {
+		api_hooks.clear();
+	}
+	//TODO: destructor deleting hook objects
+	
+	callback get_pre
+	
+}; // end EventHandler
 
