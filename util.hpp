@@ -279,6 +279,102 @@ public:
 	}
 }; // end Box
 
+
+template <typename T2, typename T>
+class MapVector {
+private:
+	map<T2, vector<T>> db;
+	
+public:
+	
+	map<T2, vector<T>> get_map() {
+		return db;
+	}
+	
+	vector<T2> get_keys() {
+		vector<T2> keys;
+		
+		auto pos = db.begin();
+		while (pos != db.end()) {
+			keys.push_back(pos->first);
+			pos++;
+		}
+		
+		return keys;
+	}
+	
+	BOOL contains(T2 tid) {
+		auto pos = db.find(tid);
+		if (pos == db.end()) 
+			return FALSE;
+		return TRUE;
+	}
+	
+	BOOL contains(T2 tid, T bp) {
+		if (!contains(tid))
+			return FALSE;
+		
+		for (int i=0; i<db[tid].size(); i++) {
+			if (db[tid][i] == bp) {
+				return TRUE;
+			}
+		}
+		
+		return FALSE;	
+	}
+	
+	
+	vector<T>get_items(T2 tid) {
+		return db[tid];
+	}
+		
+	void insert(T2 tid, T bp) {
+		if (contains(tid)) {
+			vector<T> vbp;
+			db.insert( pair<string, vector<T>>(tid, vbp) );
+		}
+		db[tid].push_back(bp);
+	}
+	
+	void erase(T2 tid) {
+		for (int i=0; i<db[tid].size(); i++)
+			delete db[tid][i];
+		db.erase(tid);
+	}
+	
+	void erase(T2 tid, T bp) {
+		for (int i=0; i<db[tid].size(); i++) {
+			if (db[tid][i] == bp) { 
+				delete db[tid][i];
+				db[tid].erase(db[tid].begin()+i);
+				break;
+			}
+		}
+	}
+	
+	void clear() {
+		for (auto key : get_keys()) {
+			erase(key);
+		}
+	}
+	
+	void show() {
+		auto pos = db.begin();
+		while (pos != db.end()) {
+			auto tid = pos->first;
+			auto vecbp = pos->second;
+			
+			for (auto bp : vecbp) {				
+				cout << tid << " ->  " << bp << endl;
+			}	
+			pos++;
+		}
+	}
+}; // end MapVector
+
+
+
+/*
 template <typename T>
 class Box2 {
 private:
@@ -342,7 +438,7 @@ public:
 	}
 	
 }; // end Box2
-
+*/
 
 
 

@@ -993,6 +993,14 @@ public:
 		threads.push_back(t);
 	}
 	
+	BOOL has_module(void *address) {
+		for (auto mod : modules) {
+			if (mod->get_ptr() == addres)
+				return true;
+			
+		return false;
+	}
+	
 	
 }; // end Process
 

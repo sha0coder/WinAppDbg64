@@ -43,7 +43,7 @@ public:
 		}
 	}
 	
-	HANDLE value() {
+	HANDLE get_value() {
 		return value;
 	}
 	
@@ -71,7 +71,7 @@ public:
 			return NULL;
 		}
 		
-		hndl = DuplicateHandle(NULL, value, NULL, NULL, STANDARD_RIGHTS_ALL, FALSE, DUPLICATE_SAME_ACCESS);
+		DuplicateHandle(NULL, value, NULL, &hndl, STANDARD_RIGHTS_ALL, FALSE, DUPLICATE_SAME_ACCESS);
 		
 		if (leak_detection)
 			cout << "duplicated handle " << value << " -> " << hndl << endl;
@@ -89,12 +89,15 @@ public:
 	}
 	
 	bool __get_inherit() {
+		DWORD flags;
+		
 		if (!is_valid()) {
 			cout << "cannot inherit a closed handle" << endl;
 			return false;
 		}
 		
-		if (GetHandleInformation(value, HANDLE_FLAG_INHERIT))
+		GetHandleInformation(value, &flags);
+		if (flags & HANDLE_FLAG_INHERIT)
 			return true;
 		return false;
 	}
@@ -108,17 +111,20 @@ public:
 		if (inherit)
 			SetHandleInformation(value, HANDLE_FLAG_INHERIT, HANDLE_FLAG_INHERIT);
 		else
-			SetHandleINformation(value, 0, 0);
+			SetHandleInformation(value, 0, 0);
 	
 	}
 	
 	bool __get_protect_from_close() {
+		DWORD flags;
+		
 		if (!is_valid()) {
 			cout << "cannot protect a closed handle" << endl;
 			return false;
 		}
 		
-		if (GetHandleInformation(value, HANDLE_FLAG_PROTECT_FROM_CLOSE))
+		GetHandleInformation(value, &flags);
+		if (flags & HANDLE_FLAG_PROTECT_FROM_CLOSE)
 			return true;
 		return false;
 	}
@@ -138,17 +144,55 @@ public:
 	
 }; // end Handle
 
+typedef enum _FILE_INFO_BY_HANDLE_CLASS {
+  FileBasicInfo,
+  FileStandardInfo,
+  FileNameInfo,
+  FileRenameInfo,
+  FileDispositionInfo,
+  FileAllocationInfo,
+  FileEndOfFileInfo,
+  FileStreamInfo,
+  FileCompressionInfo,
+  FileAttributeTagInfo,
+  FileIdBothDirectoryInfo,
+  FileIdBothDirectoryRestartInfo,
+  FileIoPriorityHintInfo,
+  FileRemoteProtocolInfo,
+  FileFullDirectoryInfo,
+  FileFullDirectoryRestartInfo,
+  FileStorageInfo,
+  FileAlignmentInfo,
+  FileIdInfo,
+  FileIdExtdDirectoryInfo,
+  FileIdExtdDirectoryRestartInfo,
+  FileDispositionInfoEx,
+  FileRenameInfoEx,
+  FileCaseSensitiveInfo,
+  FileNormalizedNameInfo,
+  MaximumFileInfoByHandleClass
+} FILE_INFO_BY_HANDLE_CLASS, *PFILE_INFO_BY_HANDLE_CLASS;
+
+
+typedef bool (*GetFileInformationByHandleEx)(HANDLE, FILE_INFO_BY_HANDLE_CLASS, LPVOID, DWORD);
+
 class FileHandle : public Handle {
 public:
+	FileHandle(HANDLE hFile, bool ownership) : Handle(hFile, ownership) {
+	}
+	
+	
 	string get_filename() {
 		
-		char *name = malloc(0x1004);
+		char *name = (char *)malloc(0x1004);
 		
 		try {
-			GetFileInformationByHandleEx(value, FILE_INFO_BY_HANDLE_CLASS.FileNameInfo, name, 0x1004);
+			
+			GetFileInformationByHandleEx getinfo = (GetFileInformationByHandleEx)GetProcAddress(LoadLibraryA("kernel32.dll"), "GetFileInformationByHandleEx");
+			getinfo(value, FileNameInfo, name, 0x1004);
 			
 			string str(name);
-			free(name)
+			free(name);
 			return str;
 			
 		} catch(...) {
@@ -157,7 +201,7 @@ public:
 		}
 		
 		string str(name);
-		free(name)
+		free(name);
 		return str;
 	}
 	
@@ -170,6 +214,9 @@ protected:
 	DWORD access;
 	
 public:
+	ProcessHandle(HANDLE hProc, bool ownership) : Handle(hProc, ownership) {
+	}
+	
 	void set_access(DWORD access) {
 		this->access = access;
 	}
@@ -188,6 +235,10 @@ protected:
 	DWORD access;
 
 public:	
+
+	ThreadHandle(HANDLE hThread, bool b) : Handle(hThread, b) {
+	}
+
 	void set_access(DWORD access) {
 		this->access = access;
 	}

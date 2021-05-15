@@ -33,7 +33,7 @@
 #include "process.hpp"
 #include "window.hpp"
 
-using namespace std;
+//using namespace std;
 
 
 
@@ -382,7 +382,7 @@ public:
 		return NULL;
 	}
 	
-	void __add_process(Proces *proc) {
+	void __add_process(Process *proc) {
 		processes.push_back(proc);
 	}
 	

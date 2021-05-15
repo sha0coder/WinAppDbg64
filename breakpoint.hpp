@@ -14,6 +14,8 @@
 
 #pragma once
 
+#include "event.hpp"
+
 using namespace std;
 
 //// Breakpoint ////

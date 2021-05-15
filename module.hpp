@@ -13,6 +13,7 @@
    
 */
 
+#pragma once
 
 #include <windows.h>
 #include <tlhelp32.h>
@@ -29,9 +30,12 @@
 #include <sstream>
 #include <map>
 
+#include "kernel.hpp"
+
 using namespace std;
 
 //// MODULE ////
+
 
 
 class Module {
@@ -40,7 +44,6 @@ private:
 	MODULEENTRY32 me;
 	FileHandle *hFile;
 	void *base_of_dll;
-	Process *proc;
 	string filename = "";
 	
 public:
@@ -49,20 +52,18 @@ public:
 		this->me = me;
 	}
 	
-	Module(void *base_of_dll, FileHandle *hFile, string filename, Process *proc) {
+	Module(void *base_of_dll, FileHandle *hFile, string filename, DWORD pid) {
 		//TODO: get the module entry
 		this->base_of_dll = base_of_dll;
 		this->hFile = hFile;
-		this->pid = proc->get_pid();
-		this->process = proc;
+		this->pid = pid;
 		this->filename = filename;
 	}
 	
-	Module(void *base_of_dll, Process *proc) {
+	Module(void *base_of_dll, DWORD pid) {
 		//TODO: get the module entry
 		this->base_of_dll = base_of_dll;
-		this->pid = proc->get_pid();
-		this->process = proc;
+		this->pid = pid;
 	}
 	
 	BOOL operator== (Module *m) {
@@ -75,8 +76,8 @@ public:
 		return (DWORD64)me.modBaseAddr;
 	}
 	
-	BYTE* get_ptr() {
-		return me.modBaseAddr;
+	void *get_ptr() {
+		return (void *)me.modBaseAddr;
 	}
 	
 	DWORD get_size() {
@@ -137,6 +138,5 @@ public:
 		return modinfo.EntryPoint;
 	}
 };
-
 
 

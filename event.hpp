@@ -18,13 +18,14 @@
 #include <string>
 #include <map>
 #include <vector>
+#include <sstream>
 
 #include "process.hpp"
 #include "thread.hpp"
 #include "kernel.hpp"
+#include "util.hpp"
+#include "hook.hpp"
 
-
-typedef bool (*callback)(Event *ev);
 
 //// EVENT /////
 
@@ -32,23 +33,26 @@ typedef bool (*callback)(Event *ev);
 class Event {
 protected:
 	Process *process;
-	Debugger *debug;
 	DEBUG_EVENT ev;
 	string name;
 	DWORD continue_status;
 	
 public:
-	Hook *hook;
-	Breakpoint *breakpoint; //TODO: where is informed?
 	
-	Event(Debugger *debug, DEBUG_EVENT ev) {
-		this->debug = debug;
+	Event(DEBUG_EVENT ev) {
 		this->ev = ev;
 	}
 	
 	string get_name() {
 		return name;
 	}
+	
+	Process *get_process() {
+		return process;
+	}
+	
+	
+	
 	
 	void set_continue_status(DWORD status) {
 		this->continue_status = status;
@@ -78,6 +82,7 @@ public:
 		return ev.dwThreadId;
 	}
 	
+	/*
 	Process *get_process() {
 		auto pid = get_pid();
 		auto system = debug->system;
@@ -91,25 +96,24 @@ public:
 		system->__add_process(process);
 		process->scan_modules();
 		return process;
-	}
+	}*/
 	
 	Thread *get_thread() {
 		auto tid = get_tid();
-		auto proc = get_process();
-		if (proc->has_thread(tid)) {
-			auto thread = proc->get_thread(tid);
+		if (process->has_thread(tid)) {
+			auto thread = process->get_thread(tid);
 			return thread;
 		}
 		
 		auto thread = new Thread(get_pid(), tid);
-		proc->add_thread(thread);
+		process->add_thread(thread);
 		return thread;
 	}
 }; // end Event
 
 //// CreateThreadEvent ////
 
-class CreateThreadEvent {
+class CreateThreadEvent : public Event {
 public:
 	string event_method = "create_thread";
 	string event_name = "Thread creation event";
@@ -133,7 +137,7 @@ public:
 	}
 	
 	void *get_start_address() {
-		return ev.u.CreateThread.lpStartAddress;
+		return (void *)ev.u.CreateThread.lpStartAddress;
 	}
 	
 		
@@ -160,7 +164,7 @@ public:
 		if (hProcess == 0 || hProcess == NULL || hProcess == INVALID_HANDLE_VALUE) 
 			return NULL;
 			
-		auto ph = new ProcessHandle(hProcess, false)
+		auto ph = new ProcessHandle(hProcess, false);
 		ph->set_access(PROCESS_ALL_ACCESS);
 		return ph;
 	}
@@ -175,7 +179,7 @@ public:
 	}
 	
 	void *get_start_address() {
-		return ev.u.CreateProcessInfo.lpStartAddress;
+		return (void *)ev.u.CreateProcessInfo.lpStartAddress;
 	}
 	
 	void *get_image_base() {
@@ -191,8 +195,8 @@ public:
 		auto ptr = raw.lpBaseOfImage + raw.dwDebugInfoFileOffset;
 		auto sz = raw.nDebugInfoSize;
 		
-		char *buff = malloc(sz);
-		get_process()->read(ptr, buff, sz);
+		char *buff = (char *)malloc(sz);
+		process->read(ptr, buff, sz);
 		
 		string str(buff, strlen(buff));
 		free(buff);
@@ -202,18 +206,18 @@ public:
 	string get_filename() {
 		auto hFile = get_file_handle();
 		if (hFile != NULL) {
-			filename = hFile.get_filename(); 
+			auto filename = hFile->get_filename(); 
 			if (!filename.empty())
 				return filename;
 		}
 		
 		auto proc = get_process();
-		auto lpRemoteFilenamePtr = ev.u.CreateProcesInfo.lpImageName;
+		auto lpRemoteFilenamePtr = ev.u.CreateProcessInfo.lpImageName;
 		if (lpRemoteFilenamePtr) {
 			auto lpFilename = proc->read_pointer(lpRemoteFilenamePtr);
 			bool bUnicode = (ev.u.CreateProcessInfo.fUnicode?true:false);
 			auto szFilename = proc->read_string(lpFilename); //TODO: implement unicode
-			return szFileName;
+			return szFilename;
 		}
 		
 		string str;
@@ -256,6 +260,11 @@ public:
 	void *get_image_base() {
 		return get_module_base();
 	}
+	
+	void *get_module_base() {
+		return (void *)get_module()->get_base();
+	}
+	
 	
 	Module *get_module() {
 		return get_process()->get_main_module();
@@ -705,19 +714,22 @@ public:
 
 
 
-
-
 class EventHandler {
 protected:
-	map<??> api_hooks;
+	MapVector<string, ApiHook *> api_hooks;
 	
 public:
 	EventHandler() {
 		api_hooks.clear();
 	}
-	//TODO: destructor deleting hook objects
+	~EventHandler() {
+		api_hooks.clear();
+	}
 	
-	callback get_pre
+	
+	//TODO: destructor deleting hook objects
+
+
 	
 }; // end EventHandler
 
