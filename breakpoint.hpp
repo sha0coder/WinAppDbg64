@@ -16,7 +16,6 @@
 
 #include "event.hpp"
 
-using namespace std;
 
 //// Breakpoint ////
 
@@ -78,6 +77,22 @@ public:
 		return tid;
 	}
 	
+	BOOL is_automatic() {
+		if (action == NULL)
+			return FALSE;
+		return TRUE;
+	}
+		
+	BOOL eval_condition(Event *ev) {
+		/*TODO: implement conditions
+		
+			bool cond = get_condition()
+		if (cond)
+			return true;
+		*/		
+		
+		return true;
+	}
 	
 	
 	BOOL is_disabled() {
@@ -692,7 +707,7 @@ public:
 		run();
 		t->set_flags_trap();
 	}
-
+	
 	
 }; // end HardwareBreakpoint
 

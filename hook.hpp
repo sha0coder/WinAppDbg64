@@ -20,7 +20,6 @@
 
 #include "event.hpp"
 
-using namespace std;
 
 typedef BOOL (*hcallback)(Event *);
 
@@ -32,7 +31,7 @@ protected:
 	map<DWORD, DWORD> param_stack;
 	
 public:
-	Hook(callback pre_cb, hcallback post_cb) {
+	Hook(hcallback pre_cb, hcallback post_cb) {
 		this->pre_cb = pre_cb;
 		this->post_cb = post_cb;
 	}
@@ -166,5 +165,26 @@ public:
 	
 }; // end ApiHook
 
+
+
+
+class EventHandler {
+protected:
+	MapVector<string, ApiHook *> api_hooks;
+	
+public:
+	EventHandler() {
+		api_hooks.clear();
+	}
+	~EventHandler() {
+		api_hooks.clear();
+	}
+	
+	
+	//TODO: destructor deleting hook objects
+
+
+	
+}; // end EventHandler
 
 

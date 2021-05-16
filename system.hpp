@@ -292,19 +292,18 @@ public:
 						this->services.push_back(service);
 					}
 					
-					free(buff);
 					CloseHandle(scm);
 					return;
 				}
 			
 			    if (GetLastError() != ERROR_MORE_DATA) {
-			      free(buff);
 			      return;
 			    }
 			    
-			    buff_sz += more_bytes_needed;
-			    free(buff);
-			    buff = malloc(buff_sz);
+			    //TODO: verify buff
+			    //buff_sz += more_bytes_needed;
+			    //buff = malloc(buff_sz);
+			    
 			    CloseHandle(scm);
 			}
 		}

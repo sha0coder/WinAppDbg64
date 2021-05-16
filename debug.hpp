@@ -60,7 +60,7 @@ System --->	Process -> threads --> Thread
 #include "system.hpp"
 #include "process.hpp"
 
-using namespace std;
+
 
 
 //// Debug //// 
@@ -255,7 +255,7 @@ public:
 		DEBUG_EVENT ev;
 		WaitForDebugEvent(&ev, millis);
 		
-		Event *event = new Event(ev, this->process);
+		Event *event = new Event(this->process, ev);
 		events.push_back(event);
 		last_event = event;
 		return event;
@@ -265,7 +265,7 @@ public:
 		DEBUG_EVENT ev;
 		WaitForDebugEvent(&ev, INFINITE);
 		
-		Event *event = new Event(ev, this->process);
+		Event *event = new Event(this->process, ev);
 		events.push_back(event);
 		last_event = event;
 		return event;
@@ -413,6 +413,10 @@ public:
 	
 	void set_hostile_mode() {
 		hostile_mode = TRUE;
+	}
+	
+	BOOL in_hostile_code() {
+		return hostile_mode;
 	}
 	
 	/*
@@ -1086,7 +1090,7 @@ public:
 	
 	// internal handlers of debug events
 	
-	BOOL _notify_guard_page(Event *ev) {
+	BOOL _notify_guard_page(ExceptionEvent *ev) {
 		auto address = ev->get_fault_address();
 		auto pid = ev->get_pid();
 		BOOL call_handler = TRUE;
@@ -1132,22 +1136,22 @@ public:
 		return call_handler;
 	}
 	
-	BOOL _notify_breakpoint(Event *ev) {
-		auto address = ev->get_exception_address();
+	BOOL _notify_breakpoint(ExceptionEvent *ev) {
+		auto address = (DWORD64)ev->get_exception_address();
 		auto pid = ev->get_pid();
 		BOOL call_handler = TRUE;
 		BOOL condition;
 		
-		auto bp = code_bp.get_item(pid, address);
+		auto bp = code_bp.get_item_by_address(pid, address);
 		if (bp != NULL) {
 			if (!bp->is_disabled()) {
 				auto thread = ev->get_thread();
 				thread->set_pc(address);
-				event->set_continue_status(DBG_CONTINUE);
+				ev->set_continue_status(DBG_CONTINUE);
 				bp->hit(ev);
 				
 				if (bp->is_running()) 
-					running_bp.insert(ev->thread_id(), bp);
+					running_bp.insert(ev->get_tid(), bp);
 				
 				condition = bp->eval_condition(ev);
 				
@@ -1162,8 +1166,10 @@ public:
 			}
 		} else if (ev->get_process()->is_system_defined_breakpoint(address)) {
 			ev->set_continue_status(DBG_CONTINUE);
+			
 		} else {
-			if (in_hostile_mode()) 
+			
+			if (is_hostile_mode()) 
 				ev->set_continue_status(DBG_EXCEPTION_NOT_HANDLED);
 			else
 				ev->set_continue_status(DBG_CONTINUE);

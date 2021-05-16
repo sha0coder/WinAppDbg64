@@ -32,7 +32,6 @@
 
 #include "kernel.hpp"
 
-using namespace std;
 
 //// MODULE ////
 

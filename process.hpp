@@ -994,13 +994,19 @@ public:
 	}
 	
 	BOOL has_module(void *address) {
-		for (auto mod : modules) {
-			if (mod->get_ptr() == addres)
+		for (auto mod : modules) 
+			if (mod->get_ptr() == address)
 				return true;
 			
 		return false;
 	}
 	
+	Module *get_module(void *address) {
+		for (auto mod : modules)
+			if (mod->get_ptr() == address)
+				return mod;
+		return NULL;
+	}
 	
 }; // end Process
 

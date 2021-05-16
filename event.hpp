@@ -24,7 +24,6 @@
 #include "thread.hpp"
 #include "kernel.hpp"
 #include "util.hpp"
-#include "hook.hpp"
 
 
 //// EVENT /////
@@ -40,6 +39,11 @@ protected:
 public:
 	
 	Event(DEBUG_EVENT ev) {
+		this->ev = ev;
+	}
+	
+	Event(Process *process, DEBUG_EVENT ev) {
+		this->process = process;
 		this->ev = ev;
 	}
 	
@@ -119,6 +123,10 @@ public:
 	string event_name = "Thread creation event";
 	string event_description = "A new thread has started";
 	
+	CreateThreadEvent(Process *process, DEBUG_EVENT ev) : Event(process, ev) {
+	}
+	
+	
 	ThreadHandle *get_thread_handle() {
 		auto hThread = ev.u.CreateThread.hThread;
 		if (hThread == 0 ||
@@ -149,6 +157,9 @@ public:
 	string event_method = "create_process";
 	string event_name = "Process creation event";
 	string event_description = "A new process has started";
+	
+	CreateProcessEvent(Process *process, DEBUG_EVENT ev) : Event(process, ev) {
+	}
 	
 	FileHandle *get_file_handle() {
 		auto hFile = ev.u.CreateProcessInfo.hFile;
@@ -192,7 +203,7 @@ public:
 	
 	string get_debug_info() {
 		auto raw = ev.u.CreateProcessInfo;
-		auto ptr = raw.lpBaseOfImage + raw.dwDebugInfoFileOffset;
+		auto ptr = (void *)raw.lpBaseOfImage + raw.dwDebugInfoFileOffset;
 		auto sz = raw.nDebugInfoSize;
 		
 		char *buff = (char *)malloc(sz);
@@ -236,6 +247,9 @@ public:
 	string event_name = "Thead termination event";
 	string event_description = "A thread has finished executing.";
 	
+	ExitThreadEvent(Process *process, DEBUG_EVENT ev) : Event(process, ev) {
+	}
+	
 	DWORD get_exit_code() {
 		return ev.u.ExitThread.dwExitCode;
 	}
@@ -248,6 +262,10 @@ public:
 	string event_method = "exit_process";
 	string event_name = "Process termination event";
 	string event_description = "A process has finished executing.";
+	
+	ExitProcessEvent(Process *process, DEBUG_EVENT ev) : Event(process, ev) {
+	}
+	
 	
 	DWORD get_exit_code() {
 		return ev.u.ExitProcess.dwExitCode;
@@ -274,10 +292,16 @@ public:
 
 
 class LoadDLLEvent : public Event {
+protected:
+	FileHandle *__hFile;
+	
 public:
 	string event_method = "load_dll";
 	string event_name = "Module load event";
 	string event_description = "A new DLL library was loaded by the debugee";
+	
+	LoadDLLEvent(Process *process, DEBUG_EVENT ev) : Event(process, ev) {
+	}
 	
 	void *get_module_base() {
 		return ev.u.LoadDll.lpBaseOfDll;
@@ -293,7 +317,9 @@ public:
 			module = proc->get_module(lpBaseOfDll);
 		} else {
 			
-			module = new Module(lpBaseOfDll, get_file_handle(), get_file_name(), proc);
+			HANDLE hndl = get_file_handle();
+			auto fh = new FileHandle(hndl, false);
+			module = new Module(lpBaseOfDll, fh, get_file_name(), proc->get_pid());
 			proc->__add_module(module);
 		}
 		 
@@ -302,15 +328,15 @@ public:
 	
 	HANDLE get_file_handle() {
 		auto hFile = ev.u.LoadDll.hFile;
-		FileHandle fh;
+		FileHandle *fh;
 		
 		if (hFile == 0 || hFile == NULL || hFile == INVALID_HANDLE_VALUE) {
 			hFile = NULL;
-		} else {
-			fh = new FileHandle(hFile, true);
-		}
+		} 
 		
-		this.__hFile = fh;
+		fh = new FileHandle(hFile, true);
+				
+		this->__hFile = fh;
 		return fh;
 	}
 	
@@ -326,7 +352,10 @@ public:
 				return szFilename;
 		}
 		
-		return get_file_handle()->get_filename();	
+		auto fh = new FileHandle(get_file_handle(), false);
+		string filename = fh->get_filename();
+		
+		return 	filename;
 	}
 	
 }; // end LoadDLLEvent
@@ -337,6 +366,9 @@ public:
 	string event_method = "unload_dll";
 	string event_name = "Module unload event";
 	string event_description = "A DLL library was unloaded by the debugee.";
+	
+	UnloadDLLEvent(Process *process, DEBUG_EVENT ev) : Event(process, ev) {
+	}
 	
 	void *get_module_base() {
 		ev.u.UnloadDll.lpBaseOfDll;
@@ -350,7 +382,7 @@ public:
 			return module;
 		}
 		
-		auto module = new Module(lpBaseOfDll, proc);
+		auto module = new Module(lpBaseOfDll, proc->get_pid());
 		proc->__add_module(module);
 		
 		return module;
@@ -359,7 +391,7 @@ public:
 	HANDLE get_file_handle() {
 		//TODO: weird things, is the handle or the FileHandle, there is a duplicated flow
 		auto hFile = get_module()->get_handle();
-		if (hFile == 0 || hFile == NULL || hFile == INVALID_FILE_HANDLE)
+		if (hFile == 0 || hFile == NULL) // || hFile == INVALID_FILE_HANDLE)
 			return NULL;
 		return hFile;
 	}
@@ -368,7 +400,7 @@ public:
 		auto module = get_module();
 		auto name = module->get_name_string();
 		if (name.empty() == 0) 
-			return module->get_filename()
+			return module->get_filename();
 		
 		return name;
 	}
@@ -382,6 +414,9 @@ public:
 	string event_method = "output_string";
 	string event_name = "Debug string output event";
 	string event_description = "The debugee sent a message to the debugger.";
+	
+	OutputDebugStringEvent(Process *process, DEBUG_EVENT ev) : Event(process, ev) {
+	}
 	
 	string get_debug_string() {
 		auto addr = ev.u.DebugString.lpDebugStringData;
@@ -405,6 +440,9 @@ public:
 	string event_name = "RIP event";
 	string event_description = "An error has occurred and the process can not be debugged.";
 	
+	RIPEvent(Process *process, DEBUG_EVENT ev) : Event(process, ev) {
+	}
+	
 	DWORD get_rip_error() {
 		return ev.u.RipInfo.dwError;
 	}
@@ -426,6 +464,8 @@ public:
 	string event_name = "exception event";
 	string event_description = "An exception was raised by the debugee";
 	
+	ExceptionEvent(Process *process, DEBUG_EVENT ev) : Event(process, ev) {
+	}
 	
     map<DWORD, string> exception_method = {
         {EXCEPTION_ACCESS_VIOLATION          , "access_violation"},
@@ -650,8 +690,8 @@ public:
 		return nested;
 	}
 	
-	vector<ExceptionEvent *> get_nested_exceptions() {
-		vector<ExceptionEvent *> nested;
+	vector<Event *> get_nested_exceptions() {
+		vector<Event *> nested;
 		
 		nested.push_back(this);
 		auto dwDebugEventCode = ev.dwDebugEventCode;
@@ -662,18 +702,19 @@ public:
 		
 		for (;;) {
 
-			auto raw = new DEBUG_EVENT();
-			raw->dwDebugEventCode = dwDebugEventCode;
-			raw->dwProcessId = dwProcessId;
-			raw->dwThreadId = dwThreadId;
-			raw->u.Exception.ExceptionRecord = *record;
-			raw->u.Exception.dwFirstChance = dwFirstChance;
+			//auto raw = new DEBUG_EVENT();
+			DEBUG_EVENT raw;
+			raw.dwDebugEventCode = dwDebugEventCode;
+			raw.dwProcessId = dwProcessId;
+			raw.dwThreadId = dwThreadId;
+			raw.u.Exception.ExceptionRecord = *record;
+			raw.u.Exception.dwFirstChance = dwFirstChance;
 			
 			Event *event;
 			
 			switch(dwDebugEventCode) {
 				case EXCEPTION_DEBUG_EVENT:
-					event = new ExceptionDebugEvent(process, raw);
+					event = new ExceptionEvent(process, raw);
 					break;
 				case CREATE_THREAD_DEBUG_EVENT:
 					event = new CreateThreadEvent(process, raw);
@@ -703,7 +744,7 @@ public:
 			nested.push_back(event); 
 			
 			record = record->ExceptionRecord;
-			if (!*record)
+			if (record == NULL || record == 0) // || !*record)
 				break;
 		}
 		
@@ -713,23 +754,4 @@ public:
 }; // end ExceptionEvent
 
 
-
-class EventHandler {
-protected:
-	MapVector<string, ApiHook *> api_hooks;
-	
-public:
-	EventHandler() {
-		api_hooks.clear();
-	}
-	~EventHandler() {
-		api_hooks.clear();
-	}
-	
-	
-	//TODO: destructor deleting hook objects
-
-
-	
-}; // end EventHandler
 
