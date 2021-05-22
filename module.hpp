@@ -29,9 +29,11 @@
 #include <vector>
 #include <sstream>
 #include <map>
+#include <algorithm>
 
 #include "kernel.hpp"
-
+#include "symbol.hpp"
+#include "label.hpp"
 
 //// MODULE ////
 
@@ -41,9 +43,14 @@ class Module {
 private:
 	int pid;
 	MODULEENTRY32 me;
+	MODULEINFO modinfo;
 	FileHandle *hFile;
-	void *base_of_dll;
+	void *base_of_dll = NULL;
+	void *entry_point = NULL;
+	DWORD size_of_image = 0;
 	string filename = "";
+	vector<Symbol *> symbols;
+
 	
 public:
 	Module(int pid, MODULEENTRY32 me) {
@@ -65,15 +72,34 @@ public:
 		this->pid = pid;
 	}
 	
+	~Module() {
+		unload_symbols();
+	}
+	
 	BOOL operator== (Module *m) {
 		if (this->get_base() == m->get_base() && this->get_name_string() == m->get_name_string())
 			return TRUE;
 		return FALSE;
 	}
 	
-	DWORD64 get_base() {
-		return (DWORD64)me.modBaseAddr;
+	void *get_base() {
+		return me.modBaseAddr;
 	}
+	
+	void set_modinfo(MODULEINFO modinfo) {
+		this->entry_point = modinfo.EntryPoint;
+		this->size_of_image = modinfo.SizeOfImage;
+		this->modinfo = modinfo;
+	}
+	
+	void *get_entry_point() {
+		return this->entry_point;
+	}
+	
+	DWORD get_size_of_image() {
+		return this->size_of_image;
+	}
+	
 	
 	void *get_ptr() {
 		return (void *)me.modBaseAddr;
@@ -103,6 +129,28 @@ public:
 		return str;
 	}
 	
+	void *resolve(string function) {
+		HMODULE hLib = NULL;
+		FARPROC addr = NULL;
+		
+		string fname = get_filename();
+		if (fname.empty())
+			return NULL;
+		
+		hLib = GetModuleHandle(fname.c_str());
+		if (hLib != NULL)
+			addr = GetProcAddress(hLib, function.c_str());
+		if (addr == NULL) {
+			hLib = LoadLibraryEx(fname.c_str(), NULL, DONT_RESOLVE_DLL_REFERENCES);
+			if (hLib != NULL) {
+				addr = GetProcAddress(hLib, function.c_str());
+				FreeLibrary(hLib);
+			}	
+		}
+		
+		return (char *)addr - (char *)hLib + this->base_of_dll;
+	}
+	
 	string get_filename() {
 		return filename;
 	}
@@ -118,24 +166,135 @@ public:
 	DWORD64 load_symbols(HANDLE hProcess, char *pdb_filename) {
 		DWORD64 sym_base;
 		
-		sym_base = SymLoadModuleEx(hProcess, me.hModule, pdb_filename, get_name(),  get_base(), get_size(), NULL, 0);
+		sym_base = SymLoadModuleEx(hProcess, me.hModule, pdb_filename, get_name(),  (DWORD64)get_base(), get_size(), NULL, 0);
 		return sym_base;
 	}
 	
-	BOOL is_address_here(DWORD64 address) {
-		DWORD64 base = get_base();
+	BOOL is_address_here(void *address) {
+		void *base = get_base();
 		if (address >= base && address < base+get_size())
 			return TRUE;
 		return FALSE;
 	}
 	
-	void *get_entry_point(HANDLE hProc) {		
-		MODULEINFO modinfo;
+	bool match_name(string name) {
+		auto myname = get_name_string();
+		transform(name.begin(), name.end(), name.begin(), ::tolower);
+		transform(myname.begin(), myname.end(), myname.begin(), ::tolower);
 		
-		GetModuleInformation(hProc, me.hModule, &modinfo, 0);
+		if (name == myname) 
+			return true;
 		
-		return modinfo.EntryPoint;
+		return false;
 	}
+	
+	void *resolve_symbol(string function) {
+		return NULL; //TODO: implement symbols
+	}
+	
+	string get_label_at_address(void *address, DWORD offset) {
+		DWORD new_offset;
+		string function;
+		auto start = get_entry_point();
+		
+		
+		address += offset;
+		offset = (char *)address - (char *)get_base();
+		
+		if (start > 0 && start < address) {
+			function = "start";
+			offset = (char *)address - (char *)start;
+		}
+		
+		Symbol *sym = get_symbol_at_address(address);
+		if (sym != NULL) {
+			new_offset = (char *)address - (char *)sym->address;
+			if (new_offset <= offset) {
+				function = sym->name;
+				offset = new_offset;
+			}
+		}
+		
+		return Label::parse_label(get_name(), function, (void *)offset);
+	}
+	
+	Symbol *get_symbol_at_address(void *address) {
+		vector<Symbol *> syms = get_symbols();
+		vector<Symbol *> syms_sorted = sort_symbols(syms);
+		
+		for (auto sym : syms_sorted) {
+			if (sym->address > address)
+				return sym;
+		}
+		
+		return NULL;
+	}
+	
+	vector<Symbol *> sort_symbols(vector<Symbol *> syms) {
+		//TODO: sort;
+		return syms;
+	}
+	
+	vector<Symbol *> get_symbols() {
+		return symbols;
+	}
+	
+	void unload_symbols() {
+		for (auto sym : symbols)
+			delete sym;
+		symbols.clear();
+	}
+	
+	void load_symbols(HANDLE hProc) {
+		DWORD sym_options;
+		BOOL success;
+		
+		symbols.clear();
+		
+		// need a handle PROCESS_QUERY_INFORMATION and call from process;
+		SymInitialize(hProc, NULL, FALSE);
+		sym_options = SymGetOptions();
+		
+		sym_options |= (
+                SYMOPT_ALLOW_ZERO_ADDRESS     |
+                SYMOPT_CASE_INSENSITIVE       |
+                SYMOPT_FAVOR_COMPRESSED       |
+                SYMOPT_INCLUDE_32BIT_MODULES  |
+                SYMOPT_UNDNAME
+            );
+        sym_options &= ~(
+                SYMOPT_LOAD_LINES         |
+                SYMOPT_NO_IMAGE_SEARCH    |
+                SYMOPT_NO_CPP             |
+                SYMOPT_IGNORE_NT_SYMPATH
+            );
+            
+        SymSetOptions(sym_options);
+        
+        SymSetOptions(sym_options | SYMOPT_ALLOW_ABSOLUTE_SYMBOLS); // this can crash? use try/catch
+        
+        success = SymLoadModule64(hProc, hFile, NULL, NULL, (DWORD64)get_base(), get_size());
+        if (!success) 
+        	success = SymLoadModule64(hProc, NULL, (char *)get_filename().c_str(), NULL, (DWORD64)get_base(), get_size());
+		
+		if (success) {
+			SymEnumerateSymbols64(hProc, (DWORD64)get_base(), Module::sym_enum_callback, this);
+		}
+        
+		SymCleanup(hProc);
+	}
+	
+	static BOOL sym_enum_callback(PCSTR name, DWORD64 address, ULONG size, PVOID mod) {
+		Module *mod2 = (Module *)mod;
+		auto sym = new Symbol(name, (void *)address, size);
+		mod2->symbols.push_back(sym);
+	}
+	
 };
+
+
+
+
+
 
 

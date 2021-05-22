@@ -26,7 +26,9 @@
 #include "util.hpp"
 
 
+
 //// EVENT /////
+
 
 
 class Event {
@@ -35,8 +37,8 @@ protected:
 	DEBUG_EVENT ev;
 	string name;
 	DWORD continue_status;
-	
 public:
+	
 	
 	Event(DEBUG_EVENT ev) {
 		this->ev = ev;
@@ -54,9 +56,6 @@ public:
 	Process *get_process() {
 		return process;
 	}
-	
-	
-	
 	
 	void set_continue_status(DWORD status) {
 		this->continue_status = status;
@@ -113,6 +112,35 @@ public:
 		process->add_thread(thread);
 		return thread;
 	}
+	/*
+	void *get_start_address() {
+		//TODO: optimize this, dont use try/catch instead calculate which member has lpStartAddress
+		try {
+			switch (get_event_code()) {
+				case EXCEPTION_DEBUG_EVENT:
+					return NULL;
+				case CREATE_THREAD_DEBUG_EVENT:
+					return (void *)ev.u.CreateThread.lpStartAddress;
+	        	case CREATE_PROCESS_DEBUG_EVENT:
+					return (void *)ev.u.CreateProcessInfo.lpStartAddress;
+	        	case EXIT_THREAD_DEBUG_EVENT:
+	        		return (void *)ev.u.ExitThread.lpStartAddress;
+	        	case EXIT_PROCESS_DEBUG_EVENT:
+	        		return (void *)ev.u.ExitProcess.lpStartAddress;
+	        	case LOAD_DLL_DEBUG_EVENT:
+	        		return (void *)ev.u.LoadDll.lpStartAddress;
+	        	case UNLOAD_DLL_DEBUG_EVENT:
+	        		return (void *)ev.u.UnloadDll.lpStartAddress;
+	        	case OUTPUT_DEBUG_STRING_EVENT:
+	        		return (void *)ev.u.DebugString.lpStartAddress;
+	        	case RIP_EVENT:
+	        		return (void *)ev.u.RipInfo.lpStartAddress;
+			}
+		} catch(...) {}
+		
+		return NULL;
+	}*/
+	
 }; // end Event
 
 //// CreateThreadEvent ////
@@ -148,7 +176,7 @@ public:
 		return (void *)ev.u.CreateThread.lpStartAddress;
 	}
 	
-		
+	
 }; // end CreateThreadEvent
 
 
@@ -203,7 +231,7 @@ public:
 	
 	string get_debug_info() {
 		auto raw = ev.u.CreateProcessInfo;
-		auto ptr = (void *)raw.lpBaseOfImage + raw.dwDebugInfoFileOffset;
+		void *ptr = (void *)((char *)raw.lpBaseOfImage + raw.dwDebugInfoFileOffset);
 		auto sz = raw.nDebugInfoSize;
 		
 		char *buff = (char *)malloc(sz);
@@ -753,5 +781,5 @@ public:
 
 }; // end ExceptionEvent
 
-
+typedef bool (*callback)(Event *);
 

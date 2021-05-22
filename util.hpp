@@ -28,6 +28,7 @@
 #include <vector>
 #include <sstream>
 #include <map>
+#include <algorithm>
 
 #define EXCEPTION_WX86_BREAKPOINT 0x4000001F
 #define MS_VC_EXCEPTION 0x406D1388
@@ -371,6 +372,119 @@ public:
 		}
 	}
 }; // end MapVector
+
+
+class SuperString {
+protected:
+	string s;
+	
+public:
+	SuperString() {
+	}
+	
+	SuperString(string s) {
+		this->s = s;
+	}
+	
+	~SuperString() {
+		s.clear();
+	}
+	
+	BOOL operator== (string s) {
+		return (this->s == s);
+	}
+	
+	BOOL operator== (SuperString s) {
+		return (this->s == s.str());
+	}
+	
+	void operator= (string s) {
+		this->s = s;
+	}
+	
+	string str() {
+		return s;
+	}
+	
+	void clear() {
+		s.clear();
+	}
+	
+	void append(string s) {
+		this->s.append(s);
+	}
+	
+	void append(char *cstr) {
+		this->s.append(cstr);
+	}
+	
+	size_t length() {
+		this->s.length();
+	}
+	
+	size_t size() {
+		this->s.size();
+	}
+	
+	bool empty() {
+		return s.empty();
+	}
+	
+	bool contains(string substr) {
+		auto pos = s.find(substr);
+		if (pos == string::npos)
+			return false;
+		return true;
+	}
+	
+	void ltrim() {
+	    s.erase(s.begin(), find_if(s.begin(), s.end(), [](unsigned char ch) {
+	        return !isspace(ch);
+	    }));
+	}
+
+
+	void rtrim() {
+	    s.erase(find_if(s.rbegin(), s.rend(), [](unsigned char ch) {
+	        return !std::isspace(ch);
+	    }).base(), s.end());
+	}
+
+	void trim() {
+	    ltrim();
+	    rtrim();
+	}
+
+	vector<string> split(char delim) {
+		vector<string> spl;
+		string token;
+		istringstream tokenStream(s);
+		
+		while (getline(tokenStream, token, delim)) {
+    		spl.push_back(token);
+		}
+		
+		return spl;                       
+	}
+	
+	void replace(string s1, string s2) {
+		auto pos = s.find(s1);
+		s.replace(pos, s2.length(), s2);
+	}
+	
+	void replace_all(const string& search, const std::string& replace) {
+	    size_t pos = 0;
+	    while ((pos = s.find(search, pos)) != std::string::npos) {
+	        s.replace(pos, search.length(), replace);
+	        pos += replace.length();
+	    }
+	}
+	
+}; // SuperString
+
+
+
+
 
 
 

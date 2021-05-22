@@ -31,9 +31,7 @@
 
 #include "thread.hpp"
 #include "module.hpp"
-
-using namespace std;
-
+#include "label.hpp"
 
 
 
@@ -47,6 +45,7 @@ protected:
 	vector<Thread *> threads;
 	vector<Module *> modules;
 	PROCESSENTRY32 entry;
+	map<string, void *> system_breakpoints;
 	
 public:
 	Process(int pid) {
@@ -112,13 +111,13 @@ public:
 			tids.push_back(t->get_tid());
 		
 		return tids;
-	}
+	} 
 	
 	vector<Thread *> get_threads() {
 		return threads;
 	}
 	
-	Module *get_module_at_address(DWORD64 address) {
+	Module *get_module_at_address(void *address) {
 		for (auto module : modules) {
 			if (module->get_base() == address) {
 				return module;
@@ -231,6 +230,14 @@ public:
 		do {
 			if (pid == me.th32ProcessID) {
 				Module *m = new Module(pid, me);
+				
+				auto hndl = get_handle(PROCESS_VM_READ|PROCESS_QUERY_INFORMATION);
+				MODULEINFO modinfo;
+				if (GetModuleInformation(hndl, me.hModule, &modinfo, 0)) 
+					m->set_modinfo(modinfo);
+				m->load_symbols(hndl);
+				CloseHandle(hndl);
+		
 				modules.push_back(m);
 			}
 		} while (Module32Next(hndl, &me));
@@ -258,6 +265,10 @@ public:
 	void clear() {
 		threads.clear();
 		modules.clear();
+	}
+	
+	Module *get_module_by_name(string module_name) {
+		return get_module_by_name(module_name.c_str());
 	}
 	
 	Module *get_module_by_name(char *module_name) {
@@ -402,9 +413,7 @@ public:
 		if (modules.size() == 0)
 			return NULL;
 			
-		hndl = get_handle(PROCESS_VM_READ | PROCESS_QUERY_INFORMATION);
-		entry = modules[0]->get_entry_point(hndl);
-		CloseHandle(hndl);
+		entry = modules[0]->get_entry_point();
 		
 		return entry;
 	}
@@ -1008,5 +1017,114 @@ public:
 		return NULL;
 	}
 	
+	BOOL is_system_defined_breakpoint(void *address) {
+		if (address == NULL || address == 0)
+			return false;
+		
+		auto module = get_module_at_address(address);
+		if (module == NULL)
+			return false;
+		
+		return (module->match_name("ntdll") || module->match_name("kernel32"));
+	}
+	
+	void *resolve_label(string label) {
+		Label lbl;
+		
+		lbl = Label::split_label_strict(label);
+		return resolve_label_compoments(lbl);
+	}
+	
+	//Module *get_module_by_name(string n)
+	
+	void *resolve_label_compoments(Label lbl) {
+		void *ptr = NULL;
+		auto mod = this->get_module_by_name(lbl.module);
+		if (mod == NULL)
+			return NULL;
+			
+		if (!lbl.function.empty()) {
+			ptr = mod->resolve(lbl.function);
+			if (ptr == NULL) {
+				ptr = mod->resolve_symbol(lbl.function);
+				if (ptr == NULL) {
+					if (lbl.function == "start") {
+						ptr = mod->get_entry_point();
+						
+					}
+				}
+			}
+		} else {
+			ptr = mod->get_base(); 
+		}
+		
+		if (lbl.module.empty()) {
+			if (!lbl.function.empty()) {
+				for (auto mod2 : modules) {
+					ptr = mod2->resolve(lbl.function);
+					if (ptr != NULL)
+						break;
+				}
+				if (ptr == NULL) {
+					mod = get_main_module();
+					
+					if (lbl.function == "start") {
+						ptr = mod->get_entry_point();
+						
+					} else if (lbl.function == "main") {
+						ptr = mod->get_base();
+						
+					}
+				}
+			} 
+		}
+		
+		ptr += lbl.offset;
+		
+		return ptr;
+	}
+	
+	//TODO: unificar todos los BOOL a bool, trues y falses tb, y los DWORD64 a void*
+	string get_label_at_address(void *address, DWORD64 offset) {
+		string label;
+		
+		address += offset;
+		auto mod = get_module_at_address(address);
+		if (mod != NULL) {
+			label = mod->get_label_at_address(address, 0);
+		} else {
+			label = Label::parse_label("", "", address); //TODO: offset ha de ser de 64bits
+		}
+		return label;
+	}
+	
+	void *__get_system_breakpoint(string label) {
+		auto pos = system_breakpoints.find(label);
+		if (pos != system_breakpoints.end()) {
+			return system_breakpoints[label];
+   		}
+		void *addr = resolve_label(label);
+		system_breakpoints.insert(make_pair(label, addr));
+		
+		return addr;
+	}
+	
+	void *get_break_on_error_ptr() {
+		void *addr;
+		
+		addr = __get_system_breakpoint("ntdll!g_dwLastErrorToBreakOn");
+		if (addr == NULL) {
+			addr = __get_system_breakpoint("kernel32!g_dwLastErrorToBreakOn");
+			
+			system_breakpoints.insert(make_pair("ntdll!g_dwLastErrorToBreakOn", addr));
+		}
+		
+		return addr;
+	}
+	
+	
+	
 }; // end Process
+
+
 

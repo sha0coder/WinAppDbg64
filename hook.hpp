@@ -19,7 +19,7 @@
 #include <windows.h>
 
 #include "event.hpp"
-
+#include "debug.hpp"
 
 typedef BOOL (*hcallback)(Event *);
 
@@ -41,11 +41,14 @@ public:
 			__call_handler(pre_cb, ev);
 		} catch(...) {
 			cout << "call handler crashed" << endl;
-		} 
+		}
 	}
+	/*
 	
-	void __post_call_action_hwbp(Event *ev) {
-		ev->debug->erase_hardware_breakpoint(ev->get_tid(), ev->breakpoint->get_address()); //TODO: breakpoint is protected?
+	TODO: this has to be done from debugger.
+	
+	void __post_call_action_hwbp(Debug *debug, Event *ev) {
+		debug->erase_hardware_breakpoint(ev->get_tid(), ev->get_address()); //TODO: breakpoint is protected?
 		try {
 			__post_call_action(ev);
 		} catch(...) {
@@ -59,6 +62,7 @@ public:
 		} catch(...) {
 		}
 	}
+	*/
 	
 	void __post_call_action(Event *ev) {
 		auto thread = ev->get_thread();
@@ -70,18 +74,20 @@ public:
 	
 	void __call_handler(hcallback cb, Event *ev) {
 		if (cb != NULL) {
-			ev->hook = this;
+			//ev->set_hook(this);
+			cb(ev);
 		}
 	}
 	
 	
-	void hook(Debug *debug, DWORD pid, void *address) {
+	//TODO: debugger has to implement this:
+	/*void hook(Debug *debug, DWORD pid, void *address) {
 		debug->break_at(pid, address, this);
 	}
 	
 	void unhook(Debug *debug, DWORD pid, void *address) {
 		debug->dont_break_at(pid, address);
-	}
+	}*/
 	
 
 	
@@ -89,7 +95,7 @@ public:
 
 
 
-typedef bool (*apicallback)(Event *ev);
+typedef BOOL (*apicallback)(Event *ev);
 
 
 class ApiHook {
@@ -108,7 +114,7 @@ public:
 		this->api_name = api_name;
 		this->pre_callback = pre_callback;
 		this->post_callback = post_callback;
-		hook.clear();
+		hooks.clear();
 	}
 	
 	vector<DWORD> get_pids() {
@@ -145,16 +151,18 @@ public:
 		return hook;
 	}
 	
-	void call(Event *ev) {		
-		get_hook(get_pid())->call(ev);
+	void call(Event *ev) {
+		get_hook(ev->get_pid())->call(ev);
 	}
 	
-	stirng get_label() {
+	string get_label() {
 		stringstream ss;
 		ss << mod_name << "!" << api_name;
 		return ss.str();
 	}
 	
+	/*
+	TODO: this can not be done from here, has to be done from debug
 	void do_hook(Debug *debug, DWORD pid) {
 		get_hook(pid)->do_hook(debug, pid, get_label());
 	}
@@ -162,6 +170,7 @@ public:
 	void do_unhook(Debug *debug, DWORD pid) {
 		get_hook(pid)->do_unhook(debug, pid, get_label());
 	}
+	*/
 	
 }; // end ApiHook
 

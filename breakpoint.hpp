@@ -38,7 +38,6 @@ public:
 	static const int RUNNING = 3;
 	
 	
-	
 	Breakpoint(DWORD64 address, BOOL condition, bpcallback action) {
 		this->address = address;
 		this->state = Breakpoint::DISABLED;
