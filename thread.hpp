@@ -54,7 +54,8 @@ class Thread {
 protected:
 	DWORD pid;
 	DWORD tid;
-	HANDLE hThread ;
+	HANDLE hThread;
+	void *teb;
 	
 public:
 	Thread(DWORD pid, DWORD tid) {
@@ -66,6 +67,13 @@ public:
 		CloseHandle(hThread);
 	}
 	
+	void set_teb(void *teb) {
+		this->teb = teb;
+	}
+	
+	void *get_teb() {
+		return teb;
+	}
 	
 	int get_tid() {
 		return tid;
@@ -137,11 +145,11 @@ public:
 		return ctx.Rip;
 	}
 		
-	void set_pc(DWORD64 pc) {
+	void set_pc(void *pc) {
 		CONTEXT ctx;	
 		
 		ctx = get_context();
-		ctx.Rip = pc;
+		ctx.Rip = (DWORD64)pc;
 		set_context(ctx);
 	}
 	
@@ -152,11 +160,11 @@ public:
 		return ctx.Rsp;
 	}
 
-	void set_sp(DWORD64 sp) {
+	void set_sp(void *sp) {
 		CONTEXT ctx;
 		
 		ctx = get_context();
-		ctx.Rsp = sp;
+		ctx.Rsp = (DWORD64)sp;
 		set_context(ctx);
 	}
 	
@@ -167,11 +175,11 @@ public:
 		return ctx.Rbp;
 	}
 	
-	void set_fp(DWORD64 fp) {
+	void set_fp(void *fp) {
 		CONTEXT ctx;
 		
 		ctx = get_context();
-		ctx.Rbp = fp;
+		ctx.Rbp = (DWORD64)fp;
 		set_context(ctx);
 	}
 	

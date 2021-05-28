@@ -211,7 +211,7 @@ public:
 		return FALSE;	
 	}
 	
-	BOOL contains(DWORD tid, DWORD64 addr) {
+	BOOL contains(DWORD tid, void *addr) {
 		if (!contains(tid))
 			return FALSE;
 		
@@ -228,7 +228,7 @@ public:
 		return db[tid];
 	}
 	
-	T get_item_by_address(DWORD tid, DWORD64 address) {
+	T get_item_by_address(DWORD tid, void *address) {
 		for (auto bp : db[tid])	{
 			if (bp->get_address() == address) 
 				return bp;

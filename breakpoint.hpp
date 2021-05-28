@@ -23,7 +23,7 @@ typedef bool (*bpcallback)(Event *);
 
 class Breakpoint {
 protected:
-	DWORD64 address;
+	void *address;
 	int state;
 	int size;
 	bpcallback action = NULL;
@@ -38,14 +38,14 @@ public:
 	static const int RUNNING = 3;
 	
 	
-	Breakpoint(DWORD64 address, BOOL condition, bpcallback action) {
+	Breakpoint(void *address, BOOL condition, bpcallback action) {
 		this->address = address;
 		this->state = Breakpoint::DISABLED;
 		this->action = action;
 		size = 1;
 	}
 	
-	Breakpoint(DWORD64 address, int size, BOOL condition, bpcallback action) {
+	Breakpoint(void *address, int size, BOOL condition, bpcallback action) {
 		this->address = address;
 		this->state = Breakpoint::DISABLED;
 		this->size = size;
@@ -118,7 +118,7 @@ public:
 		return FALSE;
 	}
 	
-	BOOL is_here(DWORD64 address) {
+	BOOL is_here(void *address) {
 		if (this->address == address) 
 			return TRUE;
 		return FALSE;
@@ -128,11 +128,11 @@ public:
 		return size;
 	}
 	
-	DWORD64 get_address() {
+	void *get_address() {
 		return address;
 	}
 	
-	DWORD64 get_end_address() {
+	void *get_end_address() {
 		return address+size;
 	}
 	
@@ -205,7 +205,7 @@ protected:
 public:
 	string type_name = "code breakpoint";
 	
-	CodeBreakpoint(DWORD64 address, BOOL condition, bpcallback action) : Breakpoint(address, condition, action) {
+	CodeBreakpoint(void *address, BOOL condition, bpcallback action) : Breakpoint(address, condition, action) {
 	}
 	
 	void __set_bp(Process *p) {
@@ -213,15 +213,15 @@ public:
 		if (prev_value == instruction) 
 			cout << "possible overlapping code breakpoint at " << get_address() << endl;
 		
-		p->write_char((void *)get_address(), instruction);
+		p->write_char(get_address(), instruction);
 	}
 	
 	void __clear_bp(Process *p) {
 		char curr_value;
 		
-		curr_value = p->read_char((void *)get_address());
+		curr_value = p->read_char(get_address());
 		if (curr_value == instruction) {
-			p->write_char((void *)get_address(), prev_value);
+			p->write_char(get_address(), prev_value);
 		} else {
 			prev_value = curr_value;
 			cout << "overwriten code breakpoint at " << get_address() << endl;
@@ -278,9 +278,9 @@ public:
 	
 	//TODO: optimize cache page_size()
 	
-	PageBreakpoint(DWORD64 address, int pages, BOOL condition, bpcallback action) : Breakpoint(address, pages * MemoryAddresses::page_size(), condition, action) {
-		floordiv_align = floor(address / MemoryAddresses::page_size());
-		truediv_align = address /  MemoryAddresses::page_size();
+	PageBreakpoint(void *address, int pages, BOOL condition, bpcallback action) : Breakpoint(address, pages * MemoryAddresses::page_size(), condition, action) {
+		floordiv_align = floor((DWORD64)address / MemoryAddresses::page_size());
+		truediv_align = (DWORD64)address /  MemoryAddresses::page_size();
 	}
 	
 	int get_size_in_pages() {
@@ -290,17 +290,17 @@ public:
 	void __set_bp(Process *p) {
 		int new_protect;
 		
-		auto m = p->mquery((void *)get_address());
+		auto m = p->mquery(get_address());
 		new_protect = m.Protect | PAGE_GUARD;
-		p->mprotect((void *)get_address(), get_size(), new_protect);
+		p->mprotect(get_address(), get_size(), new_protect);
 	}
 	
 	void __clear_bp(Process *p) {
 		int new_protect;
 		
-		auto m = p->mquery((void *)get_address());
+		auto m = p->mquery(get_address());
 		new_protect = m.Protect | (0xffffffff ^ PAGE_GUARD);
-		p->mprotect((void *)get_address(), get_size(), new_protect);
+		p->mprotect(get_address(), get_size(), new_protect);
 	}
 	
 	void do_disable(Process *p) {
@@ -490,7 +490,7 @@ public:
 		}
 	}
 	
-	void set_bp(CONTEXT *ctx, int reg, DWORD64 address, int trigger, int watch) {
+	void set_bp(CONTEXT *ctx, int reg, void *address, int trigger, int watch) {
 		unsigned long long or_mask;
 		unsigned long long and_mask;
 		DWORD64 Dr7;
@@ -511,22 +511,22 @@ public:
         
         switch(reg) {
 			case 0:
-				ctx->Dr0 = address;
+				ctx->Dr0 = (DWORD64)address;
 				break;
 			case 1:
-				ctx->Dr1 = address;
+				ctx->Dr1 = (DWORD64)address;
 				break;
 			case 2:
-				ctx->Dr2 = address;
+				ctx->Dr2 = (DWORD64)address;
 				break;
 			case 3:
-				ctx->Dr3 = address;
+				ctx->Dr3 = (DWORD64)address;
 				break;
 			case 6:
-				ctx->Dr6 = address;
+				ctx->Dr6 = (DWORD64)address;
 				break;
 			case 7:
-				ctx->Dr7 = address;
+				ctx->Dr7 = (DWORD64)address;
 				break;
 		}
 	}
@@ -585,7 +585,7 @@ public:
 	
 	string type_name = "hardware breakpoint";
 	
-	HardwareBreakpoint(DWORD64 address, BOOL condition, bpcallback action) : Breakpoint(address, condition, action) {
+	HardwareBreakpoint(void *address, BOOL condition, bpcallback action) : Breakpoint(address, condition, action) {
 	}
 	
 	//TODO: implement conditions in all breakpoints

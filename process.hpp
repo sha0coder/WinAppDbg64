@@ -34,7 +34,6 @@
 #include "label.hpp"
 
 
-
 //// PROCESS ////
 
 
@@ -1122,7 +1121,50 @@ public:
 		return addr;
 	}
 	
+	void _notify_create_thread(DWORD tid, void *teb) { // this params come from event
+		__add_created_thread(tid, teb);
+	}
 	
+	void _notify_exit_thread(DWORD tid) {
+		__del_thread(tid);
+	}
+	
+	void __add_created_thread(DWORD tid, void *teb) {
+		if (!_has_thread_id(tid)) {
+			auto thread = new Thread(get_pid(), tid);
+			thread->set_teb(teb);
+			threads.push_back(thread);
+		}
+	}
+	
+	void __del_thread(DWORD tid) {
+		for (int i=0; i<threads.size(); i++) {
+			if (threads[i]->get_tid() == tid) {
+				delete threads[i];
+				threads.erase(threads.begin()+i);
+				return;
+			}
+		}
+	}
+	
+	bool _has_thread_id(DWORD tid) {
+		for (auto t : threads) {
+			if (t->get_tid() == tid)
+				return true;
+		}
+		return false;
+	}
+	
+	void _notify_unload_dll(void *base_addr) {
+		for (int i=0; i<modules.size(); i++) {
+			if (modules[i]->get_base() == base_addr) {
+				delete modules[i];
+				modules.erase(modules.begin()+i);
+			}
+		}
+	}
+	
+
 	
 }; // end Process
 

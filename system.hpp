@@ -107,11 +107,11 @@ public:
 		EnumWindows(callback, 0);
 	}
 	
-	BOOL adjust_privileges(TOKEN_PRIVILEGES new_state) {
+	BOOL adjust_privileges(TOKEN_PRIVILEGES *new_state) {
 		HANDLE token;
 		
 		if (OpenProcessToken(GetCurrentProcess(), TOKEN_ADJUST_PRIVILEGES, &token)) {
-			AdjustTokenPrivileges(token, FALSE, &new_state, sizeof(new_state), NULL, NULL);
+			AdjustTokenPrivileges(token, FALSE, new_state, sizeof(TOKEN_PRIVILEGES), NULL, NULL);
 			CloseHandle(token);
 			return TRUE;
 		}
@@ -384,6 +384,35 @@ public:
 	void __add_process(Process *proc) {
 		processes.push_back(proc);
 	}
+	
+	void request_debug_privileges() {
+		TOKEN_PRIVILEGES state;
+		adjust_privileges(&state);
+	}
+	
+	void load_dbghelp() {
+		LoadLibraryA("c:\\windows\\system32\\dbghelp.dll");
+	}
+	
+	void fix_symbol_store_path(string symbol_store_path, bool remote, bool force)  {
+		//TODO: implement symbols
+	}
+	
+	void _notify_exit_process(DWORD pid) {
+		for (int i=0; i<processes.size(); i++) {
+			if (processes[i]->get_pid() == pid) {
+				processes.erase(processes.begin()+i);
+				return;
+			}
+		}
+	}
+	
+	void _notify_unload_dll(void *base_addr) {
+		for (auto proc : processes) {
+			proc->_notify_unload_dll(base_addr);
+		}
+	}
+	
 	
 }; // end System
 

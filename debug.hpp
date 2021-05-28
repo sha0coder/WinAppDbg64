@@ -78,6 +78,8 @@ protected:
 	BOOL hostile_mode = FALSE;
 	BOOL attached = FALSE;
 	BOOL do_trace = FALSE;
+	vector<DWORD> break_on_ep;
+
 	
 	// Breakpoint types
     int BP_TYPE_ANY             = 0;     // to get all breakpoints
@@ -103,6 +105,7 @@ protected:
     int BP_WATCH_DWORD          = DebugRegister::WATCH_DWORD;
     
 
+	bool _debug_static_init = false;
 
 public:
 	Debug() {
@@ -110,12 +113,17 @@ public:
 		debugging = FALSE;
 	}
 	
-	Debug(EventHandler *evh) {
-		this->evh = evh;
+	Debug(EventHandler *evh) {		
+		this->eh = evh;
 		sys = new System();
 		debugging = FALSE;
-		
-		EventDispatcher ed = new EventDispatcher(evh);
+				
+		if (!_debug_static_init) {
+			_debug_static_init = true;
+			sys->request_debug_privileges();
+			sys->load_dbghelp();
+			sys->fix_symbol_store_path("", false, false);
+		}
 	}
 	
 	~Debug() {
@@ -339,7 +347,7 @@ public:
 				
 		}
 		
-		EventDispatcher_dispatch(ev);
+		EventDispatcher_dispatch(event);
 	}
 
 	
@@ -537,7 +545,7 @@ protected:
 			// running breakpoints
 			if (running_bp.contains(tid)) {
 				for (auto bp : running_bp.get_items(tid)) {
-					auto addr = bp->get_address();
+					void *addr = (void *)bp->get_address();
 					
 					if (process->get_module_at_address(addr) == module) {
 						__cleanup_breakpoint(ev, bp);
@@ -592,7 +600,7 @@ protected:
 
 public:
 	
-	CodeBreakpoint *define_code_breakpoint(int pid, DWORD64 address, BOOL condition, bpcallback action) {
+	CodeBreakpoint *define_code_breakpoint(int pid, void *address, BOOL condition, bpcallback action) {
 		CodeBreakpoint *bp = new CodeBreakpoint(address, condition, action);
 		bp->set_pid(pid);
 		
@@ -607,7 +615,7 @@ public:
 		return bp;
 	}
 	
-	PageBreakpoint *define_page_breakpoint(int pid, DWORD64 address, int pages, BOOL condition, bpcallback action) {
+	PageBreakpoint *define_page_breakpoint(int pid, void *address, int pages, BOOL condition, bpcallback action) {
 		PageBreakpoint *bp = new PageBreakpoint(address, pages, condition, action);
 		bp->set_pid(pid);
 		
@@ -622,7 +630,7 @@ public:
 		return bp;
 	}
 	
-	HardwareBreakpoint *define_hardware_breakpoint(DWORD tid, DWORD64 address, int trigger_flag, int size_flag, BOOL condition, bpcallback action) {
+	HardwareBreakpoint *define_hardware_breakpoint(DWORD tid, void *address, int trigger_flag, int size_flag, BOOL condition, bpcallback action) {
 		HardwareBreakpoint *bp = new HardwareBreakpoint(address, condition, action);
 		bp->config(trigger_flag, size_flag);
 		bp->set_tid(tid);
@@ -635,7 +643,7 @@ public:
 			for (auto old_bp : hardware_bp.get_items(tid)) {
 				auto old_begin = old_bp->get_address();
 				auto old_end = old_begin + old_bp->get_size();
-				if (MemoryAddresses::do_ranges_intersect(begin, end, old_begin, old_end)) {
+				if (MemoryAddresses::do_ranges_intersect((DWORD64)begin, (DWORD64)end, (DWORD64)old_begin, (DWORD64)old_end)) {
 					cout << "already exists hardware breakpoint" << endl;
 					return NULL;
 				}
@@ -647,19 +655,19 @@ public:
 		return bp;
 	}
 	
-	BOOL has_code_breakpoint(DWORD pid, DWORD64 address) {
+	BOOL has_code_breakpoint(DWORD pid, void *address) {
 		return code_bp.contains(pid, address);
 	}
 	
-	BOOL has_page_breakpoint(DWORD pid, DWORD64 address) {
+	BOOL has_page_breakpoint(DWORD pid, void *address) {
 		return page_bp.contains(pid, address);
 	}
 	
-	BOOL has_hardware_breakpoint(DWORD tid, DWORD64 address) {
+	BOOL has_hardware_breakpoint(DWORD tid, void *address) {
 		return hardware_bp.contains(tid, address);
 	}
 	
-	CodeBreakpoint *get_code_breakpoint(DWORD pid, DWORD64 address) {
+	CodeBreakpoint *get_code_breakpoint(DWORD pid, void *address) {
 		if (!code_bp.contains(pid, address)) {
 			cout << "no breakpoint at process " << pid << ", address: " << address << endl;
 			return NULL;
@@ -668,7 +676,7 @@ public:
 		return code_bp.get_item_by_address(pid, address);
 	}
 	
-	PageBreakpoint *get_page_breakpoint(DWORD pid, DWORD64 address) {
+	PageBreakpoint *get_page_breakpoint(DWORD pid, void *address) {
 		if (!page_bp.contains(pid, address)) {
 			cout << "no breakpoint at process " << pid << ", address: " << address << endl;
 			return NULL;
@@ -677,7 +685,7 @@ public:
 		return page_bp.get_item_by_address(pid, address);
 	}
 	
-	HardwareBreakpoint *get_hardware_breakpoint(DWORD tid, DWORD64 address) {
+	HardwareBreakpoint *get_hardware_breakpoint(DWORD tid, void *address) {
 		if (!hardware_bp.contains(tid, address)) {
 			cout << "no hw breakpoint at thread " << tid << ", address: " << address << endl;
 			return NULL;
@@ -686,7 +694,7 @@ public:
 		return hardware_bp.get_item_by_address(pid, address);
 	}
 	
-	void enable_code_breakpoint(DWORD pid, DWORD64 address) {
+	void enable_code_breakpoint(DWORD pid, void *address) {
 		auto proc = this->sys->get_process(pid);
 		auto bp = get_code_breakpoint(pid, address);
 		if (bp->is_running()) {
@@ -696,7 +704,7 @@ public:
 		bp->do_enable(proc);
 	}
 	
-	void enable_page_breakpoint(DWORD pid, DWORD64 address) {
+	void enable_page_breakpoint(DWORD pid, void *address) {
 		auto proc = this->sys->get_process(pid);
 		auto bp = get_page_breakpoint(pid, address);
 		if (bp->is_running()) {
@@ -706,7 +714,7 @@ public:
 		bp->do_enable(proc);
 	}
 	
-	void enable_hardware_breakpoint(DWORD tid, DWORD64 address) {
+	void enable_hardware_breakpoint(DWORD tid, void *address) {
 		auto t = this->sys->get_thread(tid);
 		auto bp = get_hardware_breakpoint(tid, address);
 		if (bp->is_running()) {
@@ -716,7 +724,7 @@ public:
 		bp->do_enable(t);
 	}
 	
-	void enable_one_shot_code_breakpoint(DWORD pid, DWORD64 address) {
+	void enable_one_shot_code_breakpoint(DWORD pid, void *address) {
 		auto proc = this->sys->get_process(pid);
 		auto bp = get_code_breakpoint(pid, address);
 		if (bp->is_running()) {
@@ -726,7 +734,7 @@ public:
 		bp->do_one_shot(proc);
 	}
 	
-	void enable_one_shot_page_breakpoint(DWORD pid, DWORD64 address) {
+	void enable_one_shot_page_breakpoint(DWORD pid, void *address) {
 		auto proc = this->sys->get_process(pid);
 		auto bp = get_page_breakpoint(pid, address);
 		if (bp->is_running()) {
@@ -736,7 +744,7 @@ public:
 		bp->do_one_shot(proc);
 	}
 	
-	void enable_one_shot_hardware_breakpoint(DWORD tid, DWORD64 address) {
+	void enable_one_shot_hardware_breakpoint(DWORD tid, void *address) {
 		auto t = this->sys->get_thread(pid);
 		auto bp = get_hardware_breakpoint(pid, address);
 		if (bp->is_running()) {
@@ -746,7 +754,7 @@ public:
 		bp->do_one_shot(t);
 	}
 	
-	void disable_code_breakpoint(DWORD pid, DWORD64 address) {
+	void disable_code_breakpoint(DWORD pid, void *address) {
 		auto proc = this->sys->get_process(pid);
 		auto bp = get_code_breakpoint(pid, address);
 		if (bp->is_running()) {
@@ -756,7 +764,7 @@ public:
 		bp->do_disable(proc);
 	}
 	
-	void disable_page_breakpoint(DWORD pid, DWORD64 address) {
+	void disable_page_breakpoint(DWORD pid, void *address) {
 		auto proc = this->sys->get_process(pid);
 		auto bp = get_page_breakpoint(pid, address);
 		if (bp->is_running()) {
@@ -766,7 +774,7 @@ public:
 		bp->do_disable(proc);
 	}
 	
-	void disable_hardware_breakpoint(DWORD tid, DWORD64 address) {
+	void disable_hardware_breakpoint(DWORD tid, void *address) {
 		auto t = this->sys->get_thread(tid);
 		auto bp = get_hardware_breakpoint(pid, address);
 		if (bp->is_running()) {
@@ -776,7 +784,7 @@ public:
 		bp->do_disable(t);
 	}
 	
-	void erase_code_breakpoint(DWORD pid, DWORD64 address) {
+	void erase_code_breakpoint(DWORD pid, void *address) {
 		auto bp = get_code_breakpoint(pid, address);
 		if (!bp->is_disabled()) 
 			disable_code_breakpoint(pid, address);
@@ -784,7 +792,7 @@ public:
 		code_bp.erase(pid, bp);
 	}
 	
-	void erase_page_breakpoint(DWORD pid, DWORD64 address) {
+	void erase_page_breakpoint(DWORD pid, void *address) {
 		auto bp = get_page_breakpoint(pid, address);
 		if (!bp->is_disabled())
 			disable_page_breakpoint(pid, address);
@@ -792,7 +800,7 @@ public:
 		page_bp.erase(pid, bp);
 	}
 	
-	void erase_hardware_breakpoint(DWORD tid, DWORD64 address) {
+	void erase_hardware_breakpoint(DWORD tid, void *address) {
 		auto bp = get_hardware_breakpoint(tid, address);
 		if (!bp->is_disabled())
 			disable_hardware_breakpoint(tid, address);
@@ -1108,7 +1116,7 @@ public:
 			auto begin = bp->get_address();
 			auto end = begin + bp->get_size();
 			
-			if (address >= begin && address <= end)	 {
+			if ((DWORD64)address >= (DWORD64)begin && (DWORD64)address <= (DWORD64)end)	 {
 				
 				if (bp->is_enabled() || bp->is_one_shot()) {
 					ev->set_continue_status(DBG_CONTINUE);
@@ -1146,11 +1154,11 @@ public:
 		BOOL call_handler = TRUE;
 		BOOL condition;
 		
-		auto bp = code_bp.get_item_by_address(pid, (DWORD64)address);
+		auto bp = code_bp.get_item_by_address(pid, address);
 		if (bp != NULL) {
 			if (!bp->is_disabled()) {
 				auto thread = ev->get_thread();
-				thread->set_pc((DWORD64)address);
+				thread->set_pc(address);
 				ev->set_continue_status(DBG_CONTINUE);
 				bp->hit(ev);
 				
@@ -1229,6 +1237,67 @@ public:
 		}
 	}
 	
+	void post_event_notify_callback(DWORD type, Event *ev) {
+		switch(type) {
+			case EXIT_THREAD_DEBUG_EVENT:
+				_notify_exit_thread(ev);
+				break;
+			case EXIT_PROCESS_DEBUG_EVENT:
+				_notify_exit_process(ev);
+				break;
+			case UNLOAD_DLL_DEBUG_EVENT:
+				_notify_unload_dll(ev);
+				break;
+			case RIP_EVENT:
+				_notify_rip(ev);
+				break;
+		}
+	}
+	
+	void pre_exception_notify_callback(DWORD type, Event *ev) {
+		switch(type) {
+			case EXCEPTION_BREAKPOINT:
+				_notify_breakpoint(ev);
+				break;
+			case EXCEPTION_WX86_BREAKPOINT:
+				_notify_breakpoint(ev);
+				break;
+			case EXCEPTION_SINGLE_STEP:
+				_notify_single_step(ev);
+				break;
+			case EXCEPTION_GUARD_PAGE:
+				_notify_guard_page(ev);
+				break;
+			case DBG_CONTROL_C:
+				_notify_debug_control_c(ev);
+				break;
+			case MS_VC_EXCEPTION:
+				_notify_ms_vc_exception(ev);
+				break;
+		}	
+	}
+	
+	void _notify_exit_thread(Event *ev) {
+		//TODO: remove breakpoints?
+		process->_notify_exit_thread(ev->get_tid());
+	}
+	
+	void _notify_exit_process(Event *ev) {
+		//TODO: remove breakpoints?
+		sys->_notify_exit_proces(ev->get_pid());
+	}
+	
+	void _notify_unload_dll(Event *ev) {
+		//TODO: remove breakpoints?
+		sys->_notify_unload_dll(ev->get_module_base());
+	}
+	
+	void _notify_rip(Event *ev) {
+		detach(process->get_pid());
+	}
+	
+	
+	////////// EventDispatcher /////////////////
 	
 	void EventDispatcher(EventHandler *eh) {
 		set_event_handler(eh);
