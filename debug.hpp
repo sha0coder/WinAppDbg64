@@ -1102,11 +1102,11 @@ public:
 	
 	// internal handlers of debug events
 	
-	BOOL _notify_guard_page(ExceptionEvent *ev) {
+	bool _notify_guard_page(ExceptionEvent *ev) {
 		auto address = ev->get_fault_address();
 		auto pid = ev->get_pid();
-		BOOL call_handler = TRUE;
-		BOOL condition;
+		bool call_handler = TRUE;
+		bool condition;
 		
 		auto mask = ~(MemoryAddresses::page_size() - 1);
 		address &= mask;
@@ -1148,11 +1148,11 @@ public:
 		return call_handler;
 	}
 	
-	BOOL _notify_breakpoint(ExceptionEvent *ev) {
+	bool _notify_breakpoint(ExceptionEvent *ev) {
 		auto address = (void *)ev->get_exception_address();
 		auto pid = ev->get_pid();
-		BOOL call_handler = TRUE;
-		BOOL condition;
+		bool call_handler = true;
+		bool condition;
 		
 		auto bp = code_bp.get_item_by_address(pid, address);
 		if (bp != NULL) {
@@ -1195,32 +1195,12 @@ public:
 	/// EventDispatcher ////	
 
 protected:
-	/*
-	map<DWORD, callback> pre_event_notify_callback = {
-		{CREATE_THREAD_DEBUG_EVENT, this->_notify_create_thread},
-		{CREATE_PROCESS_DEBUG_EVENT, this->_notify_create_process},
-		{LOAD_DLL_DEBUG_EVENT, this->_notify_load_dll},
-	};   
-	
-	map<DWORD, callback> post_event_notify_callback = {
-		{EXIT_THREAD_DEBUG_EVENT, this->_notify_exit_thread},
-		{EXIT_PROCESS_DEBUG_EVENT, this->_notify_exit_process},
-		{UNLOAD_DLL_DEBUG_EVENT, this->_notify_unload_dll},
-		{RIP_EVENT, this->_notify_rip},
-	};
-	
-	map<DWORD, callback> pre_exception_notify_callback = {
-		{EXCEPTION_BREAKPOINT, this->_notify_breakpoint},
-		{EXCEPTION_WX86_BREAKPOINT, this->_notify_breakpoint},
-		{EXCEPTION_SINGLE_STEP, this->_notify_single_step},
-		{EXCEPTION_GUARD_PAGE, this->_notify_guard_page},
-		{DBG_CONTROL_C, this->_notify_debug_control_c},
-		{MS_VC_EXCEPTION, this->_notify_ms_vc_exception},
-	};
-	*/
+
 	map<DWORD, string> post_exception_notify_callback = {};
 	
 	EventHandler *eh = NULL;
+	
+	vector<DWORD> __tracing; // tracing tids
 	
 public:
 	void pre_event_notify_callback(DWORD type, Event *ev) {
@@ -1254,27 +1234,31 @@ public:
 		}
 	}
 	
-	void pre_exception_notify_callback(DWORD type, Event *ev) {
+	bool pre_exception_notify_callback(DWORD type, ExceptionEvent *ev) {
+			//TODO: is Event or ExceptionEvent??
+			
 		switch(type) {
 			case EXCEPTION_BREAKPOINT:
-				_notify_breakpoint(ev);
-				break;
+				return _notify_breakpoint(ev);
+		
 			case EXCEPTION_WX86_BREAKPOINT:
-				_notify_breakpoint(ev);
-				break;
+				return _notify_breakpoint(ev);
+		
 			case EXCEPTION_SINGLE_STEP:
-				_notify_single_step(ev);
-				break;
+				return _notify_single_step(ev);
+
 			case EXCEPTION_GUARD_PAGE:
-				_notify_guard_page(ev);
-				break;
+				return _notify_guard_page(ev);
+
 			case DBG_CONTROL_C:
-				_notify_debug_control_c(ev);
-				break;
+				return _notify_debug_control_c(ev);
+
 			case MS_VC_EXCEPTION:
-				_notify_ms_vc_exception(ev);
-				break;
-		}	
+				return _notify_ms_vc_exception(ev);
+
+		}
+		
+		return false;	
 	}
 	
 	void _notify_exit_thread(Event *ev) {
@@ -1284,17 +1268,229 @@ public:
 	
 	void _notify_exit_process(Event *ev) {
 		//TODO: remove breakpoints?
-		sys->_notify_exit_proces(ev->get_pid());
+		sys->_notify_exit_process(ev->get_pid());
 	}
 	
 	void _notify_unload_dll(Event *ev) {
 		//TODO: remove breakpoints?
-		sys->_notify_unload_dll(ev->get_module_base());
+		ev->get_process()->_notify_unload_dll(ev);
 	}
 	
 	void _notify_rip(Event *ev) {
-		detach(process->get_pid());
+		detach();
 	}
+	/*
+	void _notify_breakpoint(Event *ev) {
+		auto addr = ev->get_exception_address();
+		auto pid = ev->get_pid();
+		bool bCallHandler = true;
+		
+		auto bp = code_bp.get_item_by_address(pid, addr);
+		if (bp != NULL) {
+			if (!bp->is_disabled()) {
+				auto tid = ev->get_tid();
+				auto hThread = sys->get_thread(tid);
+				ev->set_continue_status(DBG_CONTINUE);
+				bp->hit(ev);
+				if (bp->is_running()) 
+					running_bp.insert(tid, bp);
+				
+				bCondition = bp->eval_condition(ev);
+				if (bCondition && bp->is_automatic()) 
+					bCallHandler = bp->run_action(ev);
+				else
+					bCallHandler = bCondition;
+			}
+		} else if (ev->get_process()->is_system_defined_breakpoint(addr)) {
+			ev->set_continue_status(DBG_CONTINUE);
+		} else {
+			if (is_hostile_mode()) 
+				ev->set_continue_status(DBG_EXCEPTION_NOT_HANDLED);
+			else
+				ev->set_continue_status(DBG_CONTINUE);
+		}
+		
+		
+		
+		return bCallHandler;
+	}*/
+	
+	bool _notify_single_step(ExceptionEvent *ev) {
+		auto tid = ev->get_tid();
+		auto hThread = sys->get_thread(tid);
+		auto hProc = ev->get_process();
+		bool bCallHandler = true;
+		bool bIsOurs = false;
+		
+
+		if (is_hostile_mode()) 
+			ev->set_continue_status(DBG_EXCEPTION_NOT_HANDLED);
+		
+		bool bFakeSingleStep = false;
+		bool bLastIsPushFlags = false;
+		bool bNextIsPopFlags = false;
+		
+		if (is_hostile_mode()) {
+			void *pc = (void *)hThread->get_pc();
+			char c = hProc->read_char(pc-1);
+			if (c == 0xf1)
+				bFakeSingleStep = true;
+			else if (c == 0x9c)
+				bLastIsPushFlags = true;
+			c = hProc->read_char(pc);
+			if (c == 0x66)
+				c = hProc->read_char(pc+1);
+			if (c == 0x9d) {
+				if (bLastIsPushFlags) 
+					bLastIsPushFlags = false;
+				else
+					bNextIsPopFlags = true;				
+			}
+		}
+		
+		if (is_tracing(tid)) {
+			bIsOurs = true;
+			if (!bFakeSingleStep)
+				ev->set_continue_status(DBG_CONTINUE);
+			hThread->set_tf();
+			
+			if (bLastIsPushFlags || bNextIsPopFlags) {
+				auto sp = hThread->get_sp();
+				auto flags = hProc->read_unsigned_int((void *)sp);
+				if (bLastIsPushFlags)
+					flags &= ~trap;
+				else
+					flags |= trap;
+				hProc->write_unsigned_int((void *)sp, flags);
+			}
+		}
+		
+		try {
+			auto running = running_bp.get_items(tid);
+		
+			bIsOurs = true;
+			if (!bFakeSingleStep)
+				ev->set_continue_status(DBG_CONTINUE);
+			bCallHandler = false;
+			
+			for (auto bp : running)
+				bp->hit(ev);
+	
+		} catch(...) {
+		}
+		
+		try {
+			auto hwbplist = hardware_bp.get_items(tid);
+			auto ctx = hThread->get_context();
+			auto dr6 = ctx.Dr6;
+			DebugRegister dr;
+			ctx.Dr6 = dr6 & dr.clear_hit_mask;
+			hThread->set_context(ctx);
+			bool bFoundBreakpoint = false;
+			bool bCondition = false;
+			
+			for (auto hwbp : hwbplist) {
+				auto slot = hwbp->get_slot();
+				if (slot && (dr6 & dr.hit_mask[slot])) {
+					if (!bFoundBreakpoint) 
+						if (!bFakeSingleStep)
+							ev->set_continue_status(DBG_CONTINUE);
+					
+					bFoundBreakpoint = true;
+					bIsOurs = true;
+					
+					
+					hwbp->hit(ev);
+					if (hwbp->is_running()) 
+						running_bp.insert(tid, hwbp);
+					
+					bool bThisCondition = hwbp->eval_condition(ev);
+					if (bThisCondition && hwbp->is_automatic()) {
+						hwbp->run_action(ev);
+						bThisCondition = false;
+					}
+					
+					bThisCondition = (bCondition || bThisCondition);			
+				}
+			}
+			
+			if (bFoundBreakpoint)
+				bCallHandler = bCondition;
+
+		} catch(...) {
+		}
+		
+		if (is_tracing(tid))
+			bCallHandler = true;
+		
+		if (!bIsOurs && !is_hostile_mode()) 
+			hThread->clear_tf();
+			
+	
+		//TODO:  handle ^C  and do ev->set_continue_status(old_continue_status)
+		
+		return bCallHandler;
+	}
+	
+	
+	bool _notify_debug_control_c(ExceptionEvent *ev) {
+		if (ev->is_first_chance())
+			ev->set_continue_status(DBG_CONTINUE);
+		return true;
+	}
+	
+	bool _notify_ms_vc_exception(ExceptionEvent *ev) {
+		auto type = ev->get_exception_information(0);
+		if (type == 0x1000) {
+			auto pszName = ev->get_exception_information(1);
+			auto tid = ev->get_exception_information(2);
+			auto proc = ev->get_process();
+			string name = proc->read_string((void *)pszName);
+			if (!name.empty()) {
+				
+				if (tid == -1)
+					tid = ev->get_tid();
+				
+				Thread *hThread;
+				if (proc->has_thread(tid)) {
+					hThread = proc->get_thread(tid);
+				} else {
+					hThread = new Thread(proc->get_pid(), tid);
+				}
+				
+				hThread->set_name(name);
+			}
+		}
+		
+		return true;
+	}
+	
+	bool is_tracing(DWORD tid) {
+		for (auto tid2 : __tracing)
+			if (tid2 == tid)
+				return true;
+		return false;
+	}
+	
+	void __start_tracing(Thread *th) {
+		auto tid = th->get_tid();
+		if (!is_tracing(tid)) {
+			th->set_tf();
+			__tracing.insert(tid);
+		}
+	}
+	
+	void __stop_tracing(Thread *th) {
+		auto tid = th->get_tid();
+		
+		for (int i=0; i<__tracing.size(); i++) {
+			if (__tracing[i] == tid) {
+				__tracing.erase(__tracing.begin()+i);
+				return;
+			}
+		}
+	}
+	
 	
 	
 	////////// EventDispatcher /////////////////

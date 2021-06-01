@@ -56,6 +56,7 @@ protected:
 	DWORD tid;
 	HANDLE hThread;
 	void *teb;
+	string name;
 	
 public:
 	Thread(DWORD pid, DWORD tid) {
@@ -73,6 +74,14 @@ public:
 	
 	void *get_teb() {
 		return teb;
+	}
+	
+	void set_name(string name) {
+		this->name = name;
+	}
+	
+	string get_name() {
+		return this->name;
 	}
 	
 	int get_tid() {
@@ -204,6 +213,14 @@ public:
 		ctx = get_context();
 		ctx.EFlags &= ~flags;
 		set_context(ctx); 
+	}
+	
+	void set_tf() {
+		set_flags_trap();
+	}
+	
+	void clear_tf() {
+		clear_flags_trap();
 	}
 	
 	DWORD get_flags_mask(DWORD mask) {

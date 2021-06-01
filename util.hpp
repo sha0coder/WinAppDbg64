@@ -224,7 +224,7 @@ public:
 		return FALSE;
 	}
 	
-	vector<T>get_items(DWORD tid) {
+	vector<T>get_items(DWORD tid) {	
 		return db[tid];
 	}
 	

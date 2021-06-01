@@ -636,7 +636,7 @@ public:
 		return ev.u.Exception.ExceptionRecord.ExceptionAddress;
 	}
 	
-	int get_exception_information(int index) {
+	long long int get_exception_information(int index) {
 		if (index < 0 || index > EXCEPTION_MAXIMUM_PARAMETERS) {
 			cout << "get_exception_information() out of range" << endl;
 			return 0;
