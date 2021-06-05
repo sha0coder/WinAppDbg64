@@ -37,6 +37,29 @@ public:
 		this->offset = offset;
 	}
 	
+	static string parse_label(string module, string function, DWORD offset) {
+		stringstream lbl;
+		
+		if (!module.empty())
+			lbl << module;	
+		lbl << "!";
+
+		if (!function.empty()) {
+			lbl << function;
+			
+			if (offset > 0)
+				lbl << "+0x" << hex << offset;
+			
+		} else {
+			if (offset > 0) 
+				lbl << "0x" << hex << offset;
+			else 
+				lbl << "0x00";
+		}
+		
+		return lbl.str();
+	}
+	
 	static string parse_label(string module, string function, void *offset) {
 		stringstream lbl;
 		

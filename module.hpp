@@ -148,7 +148,7 @@ public:
 			}	
 		}
 		
-		return (char *)addr - (char *)hLib + this->base_of_dll;
+		return (void *)((char *)addr - (char *)hLib + (char *)this->base_of_dll);
 	}
 	
 	string get_filename() {
@@ -172,7 +172,7 @@ public:
 	
 	BOOL is_address_here(void *address) {
 		void *base = get_base();
-		if (address >= base && address < base+get_size())
+		if (address >= base && address < (char *)base + get_size())
 			return TRUE;
 		return FALSE;
 	}
@@ -192,30 +192,30 @@ public:
 		return NULL; //TODO: implement symbols
 	}
 	
-	string get_label_at_address(void *address, DWORD offset) {
+	string get_label_at_address(void *addr, DWORD offset) {
 		DWORD new_offset;
 		string function;
 		auto start = get_entry_point();
-		
+		char *address = (char *)addr;
 		
 		address += offset;
-		offset = (char *)address - (char *)get_base();
+		offset = address - (char *)get_base();
 		
 		if (start > 0 && start < address) {
 			function = "start";
-			offset = (char *)address - (char *)start;
+			offset = address - (char *)start;
 		}
 		
 		Symbol *sym = get_symbol_at_address(address);
 		if (sym != NULL) {
-			new_offset = (char *)address - (char *)sym->address;
+			new_offset = address - (char *)sym->address;
 			if (new_offset <= offset) {
 				function = sym->name;
 				offset = new_offset;
 			}
 		}
 		
-		return Label::parse_label(get_name(), function, (void *)offset);
+		return Label::parse_label(get_name(), function, offset);
 	}
 	
 	Symbol *get_symbol_at_address(void *address) {

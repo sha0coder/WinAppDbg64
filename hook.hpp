@@ -182,6 +182,8 @@ protected:
 	MapVector<string, ApiHook *> api_hooks;
 	
 public:
+	callback exception = NULL;
+	
 	EventHandler() {
 		api_hooks.clear();
 	}

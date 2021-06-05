@@ -133,7 +133,7 @@ public:
 	}
 	
 	void *get_end_address() {
-		return address+size;
+		return (char *)address+size;
 	}
 	
 	int get_state() {

@@ -22,6 +22,7 @@
 #include <winver.h>
 #include <winbase.h>
 #include <ntstatus.h>
+#include <psapi.h>
 #include <math.h>
 #include <psapi.h>
 #include <iostream>
@@ -1037,30 +1038,30 @@ public:
 	//Module *get_module_by_name(string n)
 	
 	void *resolve_label_compoments(Label lbl) {
-		void *ptr = NULL;
+		char *ptr = NULL;
 		auto mod = this->get_module_by_name(lbl.module);
 		if (mod == NULL)
 			return NULL;
 			
 		if (!lbl.function.empty()) {
-			ptr = mod->resolve(lbl.function);
+			ptr = (char *)mod->resolve(lbl.function);
 			if (ptr == NULL) {
-				ptr = mod->resolve_symbol(lbl.function);
+				ptr = (char *)mod->resolve_symbol(lbl.function);
 				if (ptr == NULL) {
 					if (lbl.function == "start") {
-						ptr = mod->get_entry_point();
+						ptr = (char *)mod->get_entry_point();
 						
 					}
 				}
 			}
 		} else {
-			ptr = mod->get_base(); 
+			ptr = (char *)mod->get_base(); 
 		}
 		
 		if (lbl.module.empty()) {
 			if (!lbl.function.empty()) {
 				for (auto mod2 : modules) {
-					ptr = mod2->resolve(lbl.function);
+					ptr = (char *)mod2->resolve(lbl.function);
 					if (ptr != NULL)
 						break;
 				}
@@ -1068,10 +1069,10 @@ public:
 					mod = get_main_module();
 					
 					if (lbl.function == "start") {
-						ptr = mod->get_entry_point();
+						ptr = (char *)mod->get_entry_point();
 						
 					} else if (lbl.function == "main") {
-						ptr = mod->get_base();
+						ptr = (char *)mod->get_base();
 						
 					}
 				}
@@ -1080,12 +1081,13 @@ public:
 		
 		ptr += lbl.offset;
 		
-		return ptr;
+		return (void *)ptr;
 	}
 	
 	//TODO: unificar todos los BOOL a bool, trues y falses tb, y los DWORD64 a void*
-	string get_label_at_address(void *address, DWORD64 offset) {
+	string get_label_at_address(void *addr, DWORD64 offset) {
 		string label;
+		char *address = (char *)addr;
 		
 		address += offset;
 		auto mod = get_module_at_address(address);

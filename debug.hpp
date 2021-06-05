@@ -459,15 +459,15 @@ public:
         cout << endl;
 	}*/
 	
-	void _notify_create_process(Event *event) {
+	static bool _notify_create_process(Event *event) {
 		//TODO: implement
 	}
 	
-	void disable_process_breakpoints(int pid) {
+	static bool disable_process_breakpoints(int pid) {
 		//TODO: implement
 	}
 	
-	void disable_thread_breakpoints(int tid) {
+	static bool disable_thread_breakpoints(int tid) {
 		//TODO: implement
 	}
 	
@@ -637,12 +637,12 @@ public:
 		bp->set_pid(sys->get_thread(tid)->get_pid());
 		
 		auto begin = bp->get_address();
-		auto end = begin + bp->get_size();
+		auto end = (void *)((char *)begin + bp->get_size());
 		
 		if (hardware_bp.contains(tid)) {
 			for (auto old_bp : hardware_bp.get_items(tid)) {
 				auto old_begin = old_bp->get_address();
-				auto old_end = old_begin + old_bp->get_size();
+				auto old_end = (void *)((char *)old_begin + old_bp->get_size());
 				if (MemoryAddresses::do_ranges_intersect((DWORD64)begin, (DWORD64)end, (DWORD64)old_begin, (DWORD64)old_end)) {
 					cout << "already exists hardware breakpoint" << endl;
 					return NULL;
@@ -1114,7 +1114,7 @@ public:
 		
 		for (auto bp : page_bp.get_items(pid)) {
 			auto begin = bp->get_address();
-			auto end = begin + bp->get_size();
+			auto end = (void *)((char *)begin + bp->get_size());
 			
 			if ((DWORD64)address >= (DWORD64)begin && (DWORD64)address <= (DWORD64)end)	 {
 				
@@ -1208,9 +1208,11 @@ public:
 			case CREATE_THREAD_DEBUG_EVENT:
 				_notify_exit_thread(ev);
 				break;
+
 			case CREATE_PROCESS_DEBUG_EVENT:
 				_notify_create_process(ev);
 				break;
+				
 			case LOAD_DLL_DEBUG_EVENT:
 				_notify_load_dll(ev);
 				break;
@@ -1222,44 +1224,52 @@ public:
 			case EXIT_THREAD_DEBUG_EVENT:
 				_notify_exit_thread(ev);
 				break;
+				
 			case EXIT_PROCESS_DEBUG_EVENT:
 				_notify_exit_process(ev);
 				break;
+				
 			case UNLOAD_DLL_DEBUG_EVENT:
 				_notify_unload_dll(ev);
 				break;
+				
 			case RIP_EVENT:
 				_notify_rip(ev);
 				break;
 		}
 	}
 	
-	bool pre_exception_notify_callback(DWORD type, ExceptionEvent *ev) {
+	void pre_exception_notify_callback(DWORD type, ExceptionEvent *ev) {
 			//TODO: is Event or ExceptionEvent??
 			
 		switch(type) {
 			case EXCEPTION_BREAKPOINT:
-				return _notify_breakpoint(ev);
+				_notify_breakpoint(ev);
+				break;
 		
 			case EXCEPTION_WX86_BREAKPOINT:
-				return _notify_breakpoint(ev);
+				_notify_breakpoint(ev);
+				break;
 		
 			case EXCEPTION_SINGLE_STEP:
-				return _notify_single_step(ev);
+				_notify_single_step(ev);
+				break;
 
 			case EXCEPTION_GUARD_PAGE:
-				return _notify_guard_page(ev);
+				_notify_guard_page(ev);
+				break;
 
 			case DBG_CONTROL_C:
-				return _notify_debug_control_c(ev);
+				_notify_debug_control_c(ev);
+				break;
 
 			case MS_VC_EXCEPTION:
-				return _notify_ms_vc_exception(ev);
-
+				_notify_ms_vc_exception(ev);
+				break;
 		}
 		
-		return false;	
 	}
+	
 	
 	void _notify_exit_thread(Event *ev) {
 		//TODO: remove breakpoints?
@@ -1279,41 +1289,6 @@ public:
 	void _notify_rip(Event *ev) {
 		detach();
 	}
-	/*
-	void _notify_breakpoint(Event *ev) {
-		auto addr = ev->get_exception_address();
-		auto pid = ev->get_pid();
-		bool bCallHandler = true;
-		
-		auto bp = code_bp.get_item_by_address(pid, addr);
-		if (bp != NULL) {
-			if (!bp->is_disabled()) {
-				auto tid = ev->get_tid();
-				auto hThread = sys->get_thread(tid);
-				ev->set_continue_status(DBG_CONTINUE);
-				bp->hit(ev);
-				if (bp->is_running()) 
-					running_bp.insert(tid, bp);
-				
-				bCondition = bp->eval_condition(ev);
-				if (bCondition && bp->is_automatic()) 
-					bCallHandler = bp->run_action(ev);
-				else
-					bCallHandler = bCondition;
-			}
-		} else if (ev->get_process()->is_system_defined_breakpoint(addr)) {
-			ev->set_continue_status(DBG_CONTINUE);
-		} else {
-			if (is_hostile_mode()) 
-				ev->set_continue_status(DBG_EXCEPTION_NOT_HANDLED);
-			else
-				ev->set_continue_status(DBG_CONTINUE);
-		}
-		
-		
-		
-		return bCallHandler;
-	}*/
 	
 	bool _notify_single_step(ExceptionEvent *ev) {
 		auto tid = ev->get_tid();
@@ -1331,7 +1306,7 @@ public:
 		bool bNextIsPopFlags = false;
 		
 		if (is_hostile_mode()) {
-			void *pc = (void *)hThread->get_pc();
+			char *pc = (char *)hThread->get_pc();
 			char c = hProc->read_char(pc-1);
 			if (c == 0xf1)
 				bFakeSingleStep = true;
@@ -1473,10 +1448,10 @@ public:
 	}
 	
 	void __start_tracing(Thread *th) {
-		auto tid = th->get_tid();
+		DWORD tid = th->get_tid();
 		if (!is_tracing(tid)) {
 			th->set_tf();
-			__tracing.insert(tid);
+			__tracing.insert(__tracing.begin(), tid);
 		}
 	}
 	
@@ -1505,9 +1480,9 @@ public:
 	
 	EventHandler *set_event_handler(EventHandler *eh) {
 		if (this->eh != NULL)
-			return;
+			return eh;
 			
-		auto prev = this->ev;
+		auto prev = this->eh;
 		this->eh = eh;
 		return prev;
 	}
@@ -1526,16 +1501,12 @@ public:
 			return method;
 		}
 		
-		try {
-			method = ev->eventMethod
-		} catch(...) {
-			method = cb;
-		}
-		
+		method = cb;
+	
 		return method;
 	}
 	
-	void EventDispatcher_dispatch(Event *ev) {
+	EventHandler *EventDispatcher_dispatch(Event *ev) {
 		callback pre_handler = NULL;
 		callback post_handler = NULL;
 		bool bCall_handler = FALSE;
@@ -1547,29 +1518,19 @@ public:
 		if (ev_code == EXCEPTION_DEBUG_EVENT) {
 			auto ex_code = ev->get_exception_code();
 			//TODO: control that ex_code is in the keys
-			pre_handler = pre_exception_notify_callback[ex_code];
-			post_handler = post_exception_nofity_callback[ex_code];
+			pre_exception_notify_callback(ex_code, (ExceptionEvent *)ev);
+			//post_exception_nofity_callback(ex_code, (ExceptionEvent *)ev); 
 			
 		} else {
-			pre_handler = pre_event_notify_callback[ev_code];
-			post_handler = post_event_nofity_callback[ev_code];
+			pre_event_notify_callback(ev_code, ev);
+			//post_event_nofity_callback(ev_code, ev);
 		}
-		
-		if (pre_handler != NULL) 
-			bCall_handler = pre_handler(ev);
-		
-		if (bCall_handler && this->eh != NULL) {
-			ret = __event_handler(ev);
-		}
-		
-		if (post_handler != NULL)
-			post_handler(ev);
 		
 		return ret;
 	}
 	
-	BOOL _notify_create_thread(Event *ev) {
-		return process->_notify_create_thread(ev);
+	void _notify_create_thread(Event *ev) {
+		return process->_notify_create_thread(ev->get_tid(), NULL);
 	}
 	
 	BOOL _notify_load_dll(Event *ev) {

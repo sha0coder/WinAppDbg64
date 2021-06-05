@@ -43,7 +43,6 @@ const DWORD64 END_ADDRESS = 0x7ffffff0000;
 const DWORD64 DEFAULT_PAGE_SIZE = 0x1000; // default page size for when can not be calculated in runtime.
 
 
-
 //// TIB ////
 
 typedef struct _THREAD_BASIC_INFORMATION {
