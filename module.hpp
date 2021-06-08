@@ -41,10 +41,10 @@
 
 class Module {
 private:
-	int pid;
+	int pid = 0;
 	MODULEENTRY32 me;
 	MODULEINFO modinfo;
-	FileHandle *hFile;
+	FileHandle *hFile = NULL;
 	void *base_of_dll = NULL;
 	void *entry_point = NULL;
 	DWORD size_of_image = 0;
@@ -80,6 +80,14 @@ public:
 		if (this->get_base() == m->get_base() && this->get_name_string() == m->get_name_string())
 			return TRUE;
 		return FALSE;
+	}
+	
+	DWORD get_pid() {
+		return pid;
+	}
+	
+	void set_pid(DWORD pid) {
+		this->pid = pid;
 	}
 	
 	void *get_base() {
@@ -155,12 +163,20 @@ public:
 		return filename;
 	}
 	
+	void set_filename(string filename) {
+		this->filename = filename;
+	}
+	
 	HANDLE get_handle() {
 		return me.hModule;
 	}
 	
 	FileHandle *get_file_handle() {
 		return this->hFile;
+	}
+	
+	void set_file_handle(FileHandle *hFile) {
+		this->hFile = hFile;
 	}
 	
 	DWORD64 load_symbols(HANDLE hProcess, char *pdb_filename) {

@@ -175,6 +175,7 @@ typedef enum _FILE_INFO_BY_HANDLE_CLASS {
 
 
 typedef bool (*GetFileInformationByHandleEx)(HANDLE, FILE_INFO_BY_HANDLE_CLASS, LPVOID, DWORD);
+//typedef NTSTATUS (*NtQueryInformationFile)(HANDLE, PIO_STATUS_BLOCK, PVOID, ULONG, FILE_INFORMATION_CLASS);
 
 class FileHandle : public Handle {
 public:
@@ -196,8 +197,14 @@ public:
 			return str;
 			
 		} catch(...) {
+			/*
 			IO_STATUS_BLOCK io;
-			NtQueryInformationFile(value, &io, name, 0x1004, FileNameInformation);
+			NtQueryInformationFile(value, &io, name, 0x1004, FileNameInformation);*/
+			
+			/*NtQueryInformationFile infofile;
+			
+			infofile = (NtQueryInformationFile)GetProcAddres(LoadLibraryA("NtosKrnl.exe"), "NtQueryInformationFile");
+			NtQueryInformationFile(value, &io, name, 0x1004, FileNameInformation);*/
 		}
 		
 		string str(name);

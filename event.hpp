@@ -57,6 +57,10 @@ public:
 		return process;
 	}
 	
+	Module *get_module() {
+		return get_process()->get_main_module();
+	}
+	
 	void set_continue_status(DWORD status) {
 		this->continue_status = status;
 	}
@@ -347,14 +351,14 @@ public:
 			
 			HANDLE hndl = get_file_handle();
 			auto fh = new FileHandle(hndl, false);
-			module = new Module(lpBaseOfDll, fh, get_file_name(), proc->get_pid());
+			module = new Module(lpBaseOfDll, fh, get_filename(), proc->get_pid());
 			proc->__add_module(module);
 		}
 		 
 		return module;
 	}
 	
-	HANDLE get_file_handle() {
+	FileHandle *get_file_handle() {
 		auto hFile = ev.u.LoadDll.hFile;
 		FileHandle *fh;
 		
@@ -368,7 +372,7 @@ public:
 		return fh;
 	}
 	
-	string get_file_name() {
+	string get_filename() {
 		auto proc = get_process();
 		auto lpRemoteFilenamePtr = ev.u.LoadDll.lpImageName;
 		if (lpRemoteFilenamePtr) {

@@ -68,6 +68,10 @@ public:
 		this->tid = tid;
 	}
 	
+	bpcallback get_action() {
+		return action;
+	}
+	
 	DWORD get_pid() {
 		return pid;
 	}

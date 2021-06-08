@@ -159,6 +159,10 @@ public:
 		_cleanup_process();
 	}
 	
+	Process *exec(string file) {
+		return this->exec(file, "", TRUE, FALSE, TRUE);
+	}
+	
 	Process *exec(string file, string cmdline, BOOL debug, BOOL suspended, BOOL console) {
 		DWORD ppid;
 		BOOL is_admin;
@@ -360,8 +364,11 @@ public:
 	void cont(Event *event) {
 		
 		if (debugging && pid == event->get_pid()) {
+			cout << "cont 1" << endl;
 			process->flush_instruction_cache();
+			cout << "cont 2" << endl;
 			ContinueDebugEvent(event->get_pid(), event->get_tid(), event->get_continue_status());
+			cout << "cont 3" << endl;
 		}
 		
 		if (event == last_event) {
@@ -1533,10 +1540,99 @@ public:
 		return process->_notify_create_thread(ev->get_tid(), NULL);
 	}
 	
-	BOOL _notify_load_dll(Event *ev) {
+	bool _notify_load_dll(Event *ev) {
+		bool bCallHandler;
+		
+		bCallHandler = bpc_notify_load_dll(ev);
 		auto proc = ev->get_process();
 		
-		//TODO: deferred_bp.insert(ev->get_pid(), )
+		bCallHandler = (proc_notify_load_dll((LoadDLLEvent *)ev) && bCallHandler);
+		
+		if (is_hostile_mode()) {
+			auto mod = ev->get_module();
+			if (mod->match_name("ntdll.dll")) {
+				
+				break_at(proc->get_pid(), proc->resolve_label("ntdll!DbgUiRemoteBreakin"), NULL);
+			}	
+		}
+		
+		return bCallHandler;
+	}
+	
+	bool proc_notify_load_dll(LoadDLLEvent *ev) {
+		auto proc = ev->get_process();
+		auto base = ev->get_module_base();
+		FileHandle *hFile = ev->get_file_handle();
+		auto filename = ev->get_filename();
+		
+		if (!proc->has_module_by_base(base)) {
+			auto mod = new Module(base, hFile, filename, ev->get_pid());
+			proc->__add_module(mod);
+
+		} else {			
+			auto mod = proc->get_module_by_base(base);
+			
+			if (mod->get_file_handle() == NULL)
+				mod->set_file_handle(hFile);
+			
+			if (mod->get_pid() == 0)
+				mod->set_pid(ev->get_pid());
+				
+			if (mod->get_filename().empty())
+				mod->set_filename(ev->get_filename());
+		}
+
+		return true;
+	}
+	
+	bool bpc_notify_load_dll(Event *ev) {
+		__set_deferred_breakpoint(ev);
+		return true;
+	}
+	
+	void __set_deferred_breakpoint(Event *ev) {
+		auto pid = ev->get_pid();
+		auto proc = ev->get_process();
+		
+		for (auto defbp : deferred_bp.get_items(pid)) {
+			auto addr = defbp->get_address();
+			if (addr) {
+				deferred_bp.erase(pid, defbp);
+				__set_break(pid, addr, ((CodeBreakpoint *)defbp)->get_action(), defbp->is_one_shot());
+			}
+		}	
+	}
+	
+	CodeBreakpoint *__set_break(DWORD pid, void *addr, callback action, bool one_shot) {
+		
+		CodeBreakpoint *cbp;
+		
+		if (code_bp.contains(pid, addr)) {
+			cbp = code_bp.get_item_by_address(pid, addr);
+			if (cbp->get_action() != action) {
+				cbp->set_action(action);
+				cout << "redefined code breakpoint at " << hex << addr << " pid: " << pid << endl;
+			}
+		} else {
+			cbp = define_code_breakpoint(pid, addr, true, action);
+		}
+		
+		if (one_shot) {
+			if (!cbp->is_one_shot()) {
+				enable_one_shot_code_breakpoint(pid, addr);
+			}
+		} else {
+			if (!cbp->is_one_shot()) {
+				enable_code_breakpoint(pid, addr);
+			}
+		}
+		
+		return cbp;
+	}
+	
+	bool break_at(DWORD pid, void *address, callback action) {
+		auto bp = __set_break(pid, address, action, false);
+		return (bp != NULL);
 	}
 
 

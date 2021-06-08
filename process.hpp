@@ -40,7 +40,7 @@
 
 class Process {
 protected:
-	int pid;
+	int pid = 0;
 	HANDLE hProc = 0;
 	vector<Thread *> threads;
 	vector<Module *> modules;
@@ -211,9 +211,9 @@ public:
 		MODULEENTRY32 me;
 		HANDLE hndl;
 		
-		hndl = CreateToolhelp32Snapshot(TH32CS_SNAPMODULE, 0);
+		hndl = CreateToolhelp32Snapshot(TH32CS_SNAPMODULE, pid);
 		if (hndl == INVALID_HANDLE_VALUE) {
-			cout << "error: cant open modules handle err:" << GetLastError() << endl;
+			cout << "error: cant open modules handle err:" << GetLastError() << "pid " << pid << endl;
 			return;
 		}
 		
@@ -228,6 +228,8 @@ public:
 		modules.clear();
 		
 		do {
+			
+			//cout << pid << " == " << me.th32ProcessID << endl; 
 			if (pid == me.th32ProcessID) {
 				Module *m = new Module(pid, me);
 				
@@ -238,6 +240,7 @@ public:
 				m->load_symbols(hndl);
 				CloseHandle(hndl);
 		
+				//cout << "adding module" << endl;
 				modules.push_back(m);
 			}
 		} while (Module32Next(hndl, &me));
@@ -292,7 +295,14 @@ public:
 	
 	void flush_instruction_cache() {
 		scan_modules();
-		FlushInstructionCache(hProc, modules[0]->get_ptr(), entry.dwSize);
+		cout << "flush 1 " << modules.size() << endl;
+		if (modules.size() == 0)
+			return;
+		auto ptr = modules[0]->get_ptr();
+		cout << "flush 2 " << ptr << endl;
+		auto sz = entry.dwSize;
+		cout << "flush 3 " << sz << endl;
+		FlushInstructionCache(hProc, ptr, sz);
 	}
 	
 	void debug_break() {
@@ -1166,7 +1176,23 @@ public:
 		}
 	}
 	
-
+	bool has_module_by_base(void *addr) {
+		for (auto mod : modules) {
+			if (mod->get_base() == addr) {
+				return true;
+			}
+		}
+		return false;
+	}
+	
+	Module *get_module_by_base(void *addr) {
+		for (auto mod : modules) {
+			if (mod->get_base() == addr) {
+				return mod;
+			}
+		}
+		return NULL;
+	}
 	
 }; // end Process
 
