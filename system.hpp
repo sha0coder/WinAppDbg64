@@ -103,7 +103,7 @@ public:
 		return win;
 	}
 	
-	get_top_level_windows(WNDENUMPROC callback) {
+	void get_top_level_windows(WNDENUMPROC callback) {
 		EnumWindows(callback, 0);
 	}
 	
@@ -140,7 +140,7 @@ public:
 		mem.Address = address;
 		mem.Buffer = 0;
 		
-		ntSystemDebugControl = (NtSystemDebugControl)GetProcAddress(LoadLibrary("ntdll"),"NtSystemDebugControl");
+		ntSystemDebugControl = (NtSystemDebugControl)GetProcAddress(LoadLibraryA("ntdll"),"NtSystemDebugControl");
 		ntSystemDebugControl(DebugSysReadMsr, &mem, sizeof(mem), &mem, sizeof(mem), NULL);
 		
 		return (char *)mem.Buffer;
@@ -154,7 +154,7 @@ public:
 		mem.Address = address;
 		mem.Buffer = buffer;
 		
-		ntSystemDebugControl = (NtSystemDebugControl)GetProcAddress(LoadLibrary("ntdll"),"NtSystemDebugControl");
+		ntSystemDebugControl = (NtSystemDebugControl)GetProcAddress(LoadLibraryA("ntdll"),"NtSystemDebugControl");
 		ntSystemDebugControl(DebugSysReadMsr, &mem, sizeof(mem), &mem, sizeof(mem), NULL);
 	}
 	
@@ -163,8 +163,8 @@ public:
 		DWORD data = 0;
 		DWORD len = sizeof(DWORD);
 		
-		if (RegOpenKeyEx(hKeyParent, subkey.c_str(), 0, KEY_READ, &hKey) == ERROR_SUCCESS) {
-			RegQueryValueEx(hKey, value_name, NULL, NULL, (LPBYTE)(&data), &len);
+		if (RegOpenKeyExA(hKeyParent, subkey.c_str(), 0, KEY_READ, &hKey) == ERROR_SUCCESS) {
+			RegQueryValueExA(hKey, value_name, NULL, NULL, (LPBYTE)(&data), &len);
 			RegCloseKey(hKey);
 		}
 		
@@ -174,8 +174,8 @@ public:
 	void reg_write_dword(HKEY hKeyParent, string subkey, string value_name, DWORD value) {
 		HKEY hKey;		
 		
-		if (RegOpenKeyEx(hKeyParent, subkey.c_str(), 0, KEY_WRITE, &hKey) == ERROR_SUCCESS) {
-			RegSetValueEx(hKey, value_name.c_str(), 0, REG_DWORD, (BYTE *)&value, sizeof(DWORD));
+		if (RegOpenKeyExA(hKeyParent, subkey.c_str(), 0, KEY_WRITE, &hKey) == ERROR_SUCCESS) {
+			RegSetValueExA(hKey, value_name.c_str(), 0, REG_DWORD, (BYTE *)&value, sizeof(DWORD));
 			RegCloseKey(hKey);
 		}
 	}
@@ -284,10 +284,10 @@ public:
 		if (scm) {
 			for (;;) {
 				if (EnumServicesStatusExA(scm, SC_ENUM_PROCESS_INFO, SERVICE_WIN32, SERVICE_STATE_ALL, (LPBYTE)buff, buff_sz, &more_bytes_needed, &service_count, NULL, NULL)) {
-					ENUM_SERVICE_STATUS_PROCESS* services = (ENUM_SERVICE_STATUS_PROCESS*)buff;
+					ENUM_SERVICE_STATUS_PROCESSA* services = (ENUM_SERVICE_STATUS_PROCESSA*)buff;
 					
 					for (int i = 0; i < service_count; i++) {
-						ENUM_SERVICE_STATUS_PROCESS stat = services[i];
+						ENUM_SERVICE_STATUS_PROCESSA stat = services[i];
 						Service *service = new Service(stat);
 						this->services.push_back(service);
 					}

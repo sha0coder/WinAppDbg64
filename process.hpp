@@ -92,7 +92,9 @@ public:
 	}
 	
 	string get_name() {
-		string str(entry.szExeFile);
+		char ascii[260];
+		snprintf(ascii, 260, "%ws", entry.szExeFile);
+		string str(ascii);
 		return str;
 	}
 	
@@ -276,7 +278,7 @@ public:
 	
 	Module *get_module_by_name(char *module_name) {
 		for (auto m : modules) {
-			if (strcmp(m->get_name(), module_name) == 0) {
+			if (strcmp(m->get_name().c_str(), module_name) == 0) {
 				return m;
 			}
 		}
@@ -707,20 +709,25 @@ public:
 	
 	string read_string(void *address) {
 		char *addr = (char *)address;
-		char c;
-		string str = "";
+		char c = 0;
+		string s;
 		
 		while (addr < (void *)END_ADDRESS) {
 			c = read_char(addr);
+
 			if (c == 0x00) {
 				break;
 			} else {
-				str += c;
+				if (c < ' ' || c > '~')
+					break;
+					
+				s += c;
+				cout << "char added" << s << endl;
 			}
 			addr ++;
 		}
 		
-		return str;
+		return s;
 	}
 	//TODO: implement unicode
 	

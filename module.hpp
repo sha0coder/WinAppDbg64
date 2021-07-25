@@ -77,7 +77,7 @@ public:
 	}
 	
 	BOOL operator== (Module *m) {
-		if (this->get_base() == m->get_base() && this->get_name_string() == m->get_name_string())
+		if (this->get_base() == m->get_base() && this->get_name() == m->get_name())
 			return TRUE;
 		return FALSE;
 	}
@@ -124,17 +124,18 @@ public:
 		return me.ProccntUsage;
 	}
 	
-	char *get_path() {
-		return me.szExePath;
+	string get_path() {		
+		char ascii[260];
+		snprintf(ascii, 260, "%ws", me.szExePath);
+		string s(ascii);
+		return s;
 	}
 	
-	char *get_name() {
-		return me.szModule;
-	}
-	
-	string get_name_string() {
-		string str(me.szModule);
-		return str;
+	string get_name() {
+		char ascii[256];
+		snprintf(ascii, 256, "%ws", me.szModule);
+		string s(ascii);
+		return s;
 	}
 	
 	void *resolve(string function) {
@@ -145,11 +146,11 @@ public:
 		if (fname.empty())
 			return NULL;
 		
-		hLib = GetModuleHandle(fname.c_str());
+		hLib = GetModuleHandleA(fname.c_str());
 		if (hLib != NULL)
 			addr = GetProcAddress(hLib, function.c_str());
 		if (addr == NULL) {
-			hLib = LoadLibraryEx(fname.c_str(), NULL, DONT_RESOLVE_DLL_REFERENCES);
+			hLib = LoadLibraryExA(fname.c_str(), NULL, DONT_RESOLVE_DLL_REFERENCES);
 			if (hLib != NULL) {
 				addr = GetProcAddress(hLib, function.c_str());
 				FreeLibrary(hLib);
@@ -182,7 +183,7 @@ public:
 	DWORD64 load_symbols(HANDLE hProcess, char *pdb_filename) {
 		DWORD64 sym_base;
 		
-		sym_base = SymLoadModuleEx(hProcess, me.hModule, pdb_filename, get_name(),  (DWORD64)get_base(), get_size(), NULL, 0);
+		sym_base = SymLoadModuleEx(hProcess, me.hModule, pdb_filename, get_name().c_str(),  (DWORD64)get_base(), get_size(), NULL, 0);
 		return sym_base;
 	}
 	
@@ -194,7 +195,7 @@ public:
 	}
 	
 	bool match_name(string name) {
-		auto myname = get_name_string();
+		auto myname = get_name();
 		transform(name.begin(), name.end(), name.begin(), ::tolower);
 		transform(myname.begin(), myname.end(), myname.begin(), ::tolower);
 		
@@ -294,15 +295,22 @@ public:
         	success = SymLoadModule64(hProc, NULL, (char *)get_filename().c_str(), NULL, (DWORD64)get_base(), get_size());
 		
 		if (success) {
-			SymEnumerateSymbols64(hProc, (DWORD64)get_base(), Module::sym_enum_callback, this);
+			SymEnumSymbols(hProc, (DWORD64)get_base(), "*",  Module::sym_enum_callback, this);
 		}
         
 		SymCleanup(hProc);
 	}
 	
-	static BOOL sym_enum_callback(PCSTR name, DWORD64 address, ULONG size, PVOID mod) {
+	/*static BOOL sym_enum_callback(PCSTR name, DWORD64 address, ULONG size, PVOID mod) {
 		Module *mod2 = (Module *)mod;
 		auto sym = new Symbol(name, (void *)address, size);
+		mod2->symbols.push_back(sym);
+	}*/
+
+	static BOOL sym_enum_callback(PSYMBOL_INFO syminfo, ULONG size, void *mod) {
+		Module* mod2 = (Module*)mod;
+
+		Symbol *sym = new Symbol(syminfo->Name, (void *)syminfo->Address, size);
 		mod2->symbols.push_back(sym);
 	}
 	

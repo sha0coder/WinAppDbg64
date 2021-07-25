@@ -29,28 +29,39 @@
 
 //// EVENT /////
 
-
+class Debug;
+class EventHandler;
 
 class Event {
 protected:
-	Process *process;
+	Process *process = NULL;
 	DEBUG_EVENT ev;
 	string name;
 	DWORD continue_status;
+	Debug* dbg;
+
 public:
 	
 	
-	Event(DEBUG_EVENT ev) {
+	Event(DEBUG_EVENT ev, Debug *dbg) {
 		this->ev = ev;
+		this->dbg = dbg;
+
+		continue_status = DBG_EXCEPTION_HANDLED;
 	}
 	
-	Event(Process *process, DEBUG_EVENT ev) {
+	Event(Process *process, DEBUG_EVENT ev, Debug *dbg) {
 		this->process = process;
 		this->ev = ev;
+		this->dbg = dbg;
 	}
 	
 	string get_name() {
 		return name;
+	}
+
+	Debug *get_debug() {
+		return dbg;
 	}
 	
 	Process *get_process() {
@@ -89,10 +100,18 @@ public:
 		return ev.dwThreadId;
 	}
 	
-	/*
+	void print() {
+		cout << "Event on process " << get_pid() << endl;
+		cout << "      on thread " << get_tid() << endl;
+		cout << "      event code " << get_event_code() << endl;
+		cout << "      exception code " << get_exception_code() << endl;
+		cout << "----" << endl;
+	}
+	
+	
 	Process *get_process() {
 		auto pid = get_pid();
-		auto system = debug->system;
+		auto system = dbg->sys;
 		
 		if (system->has_process(pid)) {
 			auto proc = system->get_process(pid);
@@ -103,7 +122,7 @@ public:
 		system->__add_process(process);
 		process->scan_modules();
 		return process;
-	}*/
+	}
 	
 	Thread *get_thread() {
 		auto tid = get_tid();
@@ -116,7 +135,7 @@ public:
 		process->add_thread(thread);
 		return thread;
 	}
-	/*
+	
 	void *get_start_address() {
 		//TODO: optimize this, dont use try/catch instead calculate which member has lpStartAddress
 		try {
@@ -127,6 +146,7 @@ public:
 					return (void *)ev.u.CreateThread.lpStartAddress;
 	        	case CREATE_PROCESS_DEBUG_EVENT:
 					return (void *)ev.u.CreateProcessInfo.lpStartAddress;
+				/*
 	        	case EXIT_THREAD_DEBUG_EVENT:
 	        		return (void *)ev.u.ExitThread.lpStartAddress;
 	        	case EXIT_PROCESS_DEBUG_EVENT:
@@ -138,12 +158,12 @@ public:
 	        	case OUTPUT_DEBUG_STRING_EVENT:
 	        		return (void *)ev.u.DebugString.lpStartAddress;
 	        	case RIP_EVENT:
-	        		return (void *)ev.u.RipInfo.lpStartAddress;
+	        		return (void *)ev.u.RipInfo.lpStartAddress;*/
 			}
 		} catch(...) {}
 		
 		return NULL;
-	}*/
+	}
 	
 }; // end Event
 
@@ -155,7 +175,7 @@ public:
 	string event_name = "Thread creation event";
 	string event_description = "A new thread has started";
 	
-	CreateThreadEvent(Process *process, DEBUG_EVENT ev) : Event(process, ev) {
+	CreateThreadEvent(Process* process, DEBUG_EVENT ev, Debug* dbg) : Event(process, ev, dbg) {
 	}
 	
 	
@@ -190,7 +210,7 @@ public:
 	string event_name = "Process creation event";
 	string event_description = "A new process has started";
 	
-	CreateProcessEvent(Process *process, DEBUG_EVENT ev) : Event(process, ev) {
+	CreateProcessEvent(Process *process, DEBUG_EVENT ev, Debug *dbg) : Event(process, ev, dbg) {
 	}
 	
 	FileHandle *get_file_handle() {
@@ -279,7 +299,7 @@ public:
 	string event_name = "Thead termination event";
 	string event_description = "A thread has finished executing.";
 	
-	ExitThreadEvent(Process *process, DEBUG_EVENT ev) : Event(process, ev) {
+	ExitThreadEvent(Process *process, DEBUG_EVENT ev, Debug *dbg) : Event(process, ev, dbg) {
 	}
 	
 	DWORD get_exit_code() {
@@ -295,7 +315,7 @@ public:
 	string event_name = "Process termination event";
 	string event_description = "A process has finished executing.";
 	
-	ExitProcessEvent(Process *process, DEBUG_EVENT ev) : Event(process, ev) {
+	ExitProcessEvent(Process *process, DEBUG_EVENT ev, Debug *dbg) : Event(process, ev, dbg) {
 	}
 	
 	
@@ -332,7 +352,7 @@ public:
 	string event_name = "Module load event";
 	string event_description = "A new DLL library was loaded by the debugee";
 	
-	LoadDLLEvent(Process *process, DEBUG_EVENT ev) : Event(process, ev) {
+	LoadDLLEvent(Process *process, DEBUG_EVENT ev, Debug *dbg) : Event(process, ev, dbg) {
 	}
 	
 	void *get_module_base() {
@@ -373,19 +393,35 @@ public:
 	}
 	
 	string get_filename() {
+		cout << "get_filename 1" << endl;
 		auto proc = get_process();
+		
+		if (proc == NULL)
+			cout << "process is NULL" << endl;
+		
+		cout << "PID: " << proc->get_pid() << endl;
+		
+		cout << "get_filename 2 " << endl;
 		auto lpRemoteFilenamePtr = ev.u.LoadDll.lpImageName;
+		cout << "get_filename 3" << endl;
 		if (lpRemoteFilenamePtr) {
+			cout << "get_filename 4" << endl;
 			auto lpFilename = proc->read_pointer(lpRemoteFilenamePtr);
+			cout << "get_filename 5" << endl;
 			auto fUnicode = (ev.u.LoadDll.fUnicode?true:false);
+			cout << "get_filename 6 " << lpFilename << endl;
 			auto szFilename = proc->read_string(lpFilename);
+			cout << "get_filename 7" << endl;
 			
 			if (!szFilename.empty())
 				return szFilename;
 		}
 		
+		cout << "get_filename 8" << endl;
 		auto fh = new FileHandle(get_file_handle(), false);
+		cout << "get_filename 9" << endl;
 		string filename = fh->get_filename();
+		cout << "get_filename 10" << endl;
 		
 		return 	filename;
 	}
@@ -399,7 +435,7 @@ public:
 	string event_name = "Module unload event";
 	string event_description = "A DLL library was unloaded by the debugee.";
 	
-	UnloadDLLEvent(Process *process, DEBUG_EVENT ev) : Event(process, ev) {
+	UnloadDLLEvent(Process *process, DEBUG_EVENT ev, Debug* dbg) : Event(process, ev, dbg) {
 	}
 	
 	void *get_module_base() {
@@ -430,7 +466,7 @@ public:
 	
 	string get_filename() {
 		auto module = get_module();
-		auto name = module->get_name_string();
+		auto name = module->get_name();
 		if (name.empty() == 0) 
 			return module->get_filename();
 		
@@ -447,7 +483,7 @@ public:
 	string event_name = "Debug string output event";
 	string event_description = "The debugee sent a message to the debugger.";
 	
-	OutputDebugStringEvent(Process *process, DEBUG_EVENT ev) : Event(process, ev) {
+	OutputDebugStringEvent(Process *process, DEBUG_EVENT ev, Debug* dbg) : Event(process, ev, dbg) {
 	}
 	
 	string get_debug_string() {
@@ -472,7 +508,7 @@ public:
 	string event_name = "RIP event";
 	string event_description = "An error has occurred and the process can not be debugged.";
 	
-	RIPEvent(Process *process, DEBUG_EVENT ev) : Event(process, ev) {
+	RIPEvent(Process *process, DEBUG_EVENT ev, Debug* dbg) : Event(process, ev, dbg) {
 	}
 	
 	DWORD get_rip_error() {
@@ -496,7 +532,7 @@ public:
 	string event_name = "exception event";
 	string event_description = "An exception was raised by the debugee";
 	
-	ExceptionEvent(Process *process, DEBUG_EVENT ev) : Event(process, ev) {
+	ExceptionEvent(Process *process, DEBUG_EVENT ev, Debug *dbg) : Event(process, ev, dbg) {
 	}
 	
     map<DWORD, string> exception_method = {
@@ -625,7 +661,7 @@ public:
 	}
 	
 	BOOL is_user_defined_exception() {
-		return (get_exception_code() & 0x10000000 == 0);
+		return ((get_exception_code() & 0x10000000) == 0);
 	}
 	
 	BOOL is_system_defined_exception() {
@@ -746,31 +782,31 @@ public:
 			
 			switch(dwDebugEventCode) {
 				case EXCEPTION_DEBUG_EVENT:
-					event = new ExceptionEvent(process, raw);
+					event = new ExceptionEvent(process, raw, dbg);
 					break;
 				case CREATE_THREAD_DEBUG_EVENT:
-					event = new CreateThreadEvent(process, raw);
+					event = new CreateThreadEvent(process, raw, dbg);
 					break;
 				case CREATE_PROCESS_DEBUG_EVENT:
-					event = new CreateProcessEvent(process, raw);
+					event = new CreateProcessEvent(process, raw, dbg);
 					break;
 				case EXIT_THREAD_DEBUG_EVENT:
-					event = new ExitThreadEvent(process, raw);
+					event = new ExitThreadEvent(process, raw, dbg);
 					break;
 				case EXIT_PROCESS_DEBUG_EVENT:
-					event = new ExitProcessEvent(process, raw);
+					event = new ExitProcessEvent(process, raw, dbg);
 					break;
 				case LOAD_DLL_DEBUG_EVENT:
-					event = new LoadDLLEvent(process, raw);
+					event = new LoadDLLEvent(process, raw, dbg);
 					break;
 				case UNLOAD_DLL_DEBUG_EVENT:
-					event = new UnloadDLLEvent(process, raw);
+					event = new UnloadDLLEvent(process, raw, dbg);
 					break;
 				case OUTPUT_DEBUG_STRING_EVENT:
-					event = new OutputDebugStringEvent(process, raw);
+					event = new OutputDebugStringEvent(process, raw, dbg);
 					break;
 				case RIP_EVENT:
-					event = new RIPEvent(process, raw);
+					event = new RIPEvent(process, raw, dbg);
 					break;
 			}
 			nested.push_back(event); 
@@ -787,3 +823,147 @@ public:
 
 typedef bool (*callback)(Event *);
 
+
+
+/* IMPLEMENTED IN DEBUG
+class EventDispatcher {
+protected:
+	EventHandler *eh;
+	map<DWORD, string> post_exception_notify_callback = {};
+	vector<DWORD> __tracing; // tracing tids
+
+public:
+
+	EventDispatcher(EventHandler *eh) {
+		this->eh = eh;
+	}
+
+	void set_event_handler(EventHandler* eh) {
+		this->eh = eh;
+	}
+
+	EventHandler *get_event_handler() {
+		return eh;
+	}
+
+	static callback get_handler_method(EventHandler* eh, Event* ev, callback cb) {
+		auto code = ev->get_event_code();
+		callback method;
+
+		if (code == EXCEPTION_DEBUG_EVENT) {
+			try {
+				method = eh->exception;
+			}
+			catch (...) {
+				method = cb;
+			}
+			
+			return method;
+		}
+
+		method = cb;
+		return method;
+	}
+	
+	void pre_event_notify_callback(DWORD type, Event* ev) {
+		switch (type) {
+		case CREATE_THREAD_DEBUG_EVENT:
+			cout << "create thread event" << endl;
+			ev->get_debug()->_notify_exit_thread(ev);
+			break;
+
+		case CREATE_PROCESS_DEBUG_EVENT:
+			cout << "create process debug" << endl;
+			ev->get_debug()->_notify_create_process(ev);
+			break;
+
+		case LOAD_DLL_DEBUG_EVENT:
+			cout << "load dll event" << endl;
+			ev->get_debug()->_notify_load_dll(ev);
+			break;
+		}
+	}
+
+	void post_event_notify_callback(DWORD type, Event* ev) {
+		switch (type) {
+		case EXIT_THREAD_DEBUG_EVENT:
+			ev->get_debug()->_notify_exit_thread(ev);
+			break;
+
+		case EXIT_PROCESS_DEBUG_EVENT:
+			ev->get_debug()->_notify_exit_process(ev);
+			break;
+
+		case UNLOAD_DLL_DEBUG_EVENT:
+			ev->get_debug()->_notify_unload_dll(ev);
+			break;
+
+		case RIP_EVENT:
+			ev->get_debug()->_notify_rip(ev);
+			break;
+		}
+	}
+
+	void pre_exception_notify_callback(DWORD type, ExceptionEvent* ev) {
+		//TODO: is Event or ExceptionEvent??
+
+		switch (type) {
+		case EXCEPTION_BREAKPOINT:
+			ev->get_debug()->_notify_breakpoint(ev);
+			break;
+
+		case EXCEPTION_WX86_BREAKPOINT:
+			ev->get_debug()->_notify_breakpoint(ev);
+			break;
+
+		case EXCEPTION_SINGLE_STEP:
+			ev->get_debug()->_notify_single_step(ev);
+			break;
+
+		case EXCEPTION_GUARD_PAGE:
+			ev->get_debug()->_notify_guard_page(ev);
+			break;
+
+		case DBG_CONTROL_C:
+			ev->get_debug()->_notify_debug_control_c(ev);
+			break;
+
+		case MS_VC_EXCEPTION:
+			ev->get_debug()->_notify_ms_vc_exception(ev);
+			break;
+		}
+	}
+
+	EventHandler *dispatch(Event *ev) {
+		callback pre_handler = NULL;
+		callback post_handler = NULL;
+		bool bCall_handler = FALSE;
+		EventHandler* ret = NULL;
+
+		auto ev_code = ev->get_event_code();
+
+		cout << "dispatch" << endl;
+
+		if (ev_code == EXCEPTION_DEBUG_EVENT) {
+			cout << "is exception" << endl;
+			auto ex_code = ev->get_exception_code();
+			//TODO: control that ex_code is in the keys
+			pre_exception_notify_callback(ex_code, (ExceptionEvent*)ev);
+			//post_exception_nofity_callback(ex_code, (ExceptionEvent *)ev); 
+
+		}
+		else {
+			cout << "is not ex" << endl;
+			pre_event_notify_callback(ev_code, ev);
+			//post_event_nofity_callback(ev_code, ev);
+		}
+
+		cout << "end dispatch" << endl;
+
+		return ret;
+	}
+
+
+}; // end EventDispatcher
+
+*/

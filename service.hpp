@@ -23,14 +23,14 @@
 
 class Service {
 protected:
-	ENUM_SERVICE_STATUS_PROCESS stat;
+	ENUM_SERVICE_STATUS_PROCESSA stat;
 	
 public:
-	Service(ENUM_SERVICE_STATUS_PROCESS stat) {
+	Service(ENUM_SERVICE_STATUS_PROCESSA stat) {
 		this->stat = stat;
 	}
 	
-	ENUM_SERVICE_STATUS_PROCESS get_stat() {
+	ENUM_SERVICE_STATUS_PROCESSA get_stat() {
 		return stat;
 	}
 	
@@ -62,7 +62,7 @@ public:
 	void change_description(string description) {
 		SC_HANDLE scm;
 		SC_HANDLE hService;
-		SERVICE_DESCRIPTION sd;
+		SERVICE_DESCRIPTIONA sd;
 		
 		sd.lpDescription = (LPSTR)description.c_str();
 		
@@ -71,7 +71,7 @@ public:
 			hService = open_service(scm, SERVICE_CHANGE_CONFIG);
 			if (hService) {
 				
-				ChangeServiceConfig2W(hService, SERVICE_CONFIG_DESCRIPTION, &sd);
+				ChangeServiceConfig2A(hService, SERVICE_CONFIG_DESCRIPTION, &sd);
 				
 				CloseServiceHandle(hService);
 			}	

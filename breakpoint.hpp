@@ -27,6 +27,7 @@ protected:
 	int state;
 	int size;
 	bpcallback action = NULL;
+	Hook *hook_action = NULL;
 	BOOL condition;
 	DWORD pid = 0;
 	DWORD tid = 0;
@@ -42,6 +43,13 @@ public:
 		this->address = address;
 		this->state = Breakpoint::DISABLED;
 		this->action = action;
+		size = 1;
+	}
+
+	Breakpoint(void* address, BOOL condition, Hook *action) {
+		this->address = address;
+		this->state = Breakpoint::DISABLED;
+		this->hook_action = action;
 		size = 1;
 	}
 	
@@ -70,6 +78,10 @@ public:
 	
 	bpcallback get_action() {
 		return action;
+	}
+
+	Hook *get_hook_action() {
+		return hook_action;
 	}
 	
 	DWORD get_pid() {
@@ -147,12 +159,18 @@ public:
 	void set_action(bpcallback action) {
 		this->action = action;
 	}
+
+	void set_hook_action(Hook* action) {
+		this->hook_action = action;
+	}
 	
 	BOOL run_action(Event *ev) {
-		if (action == NULL)
+		if (action == NULL && hook_action == NULL)
 			return TRUE;
 			
-		return action(ev);	//TODO: use try/catch?
+		if (action != NULL)
+			return action(ev);	//TODO: use try/catch?
+		return hook_action->call(ev);
 	}
 	
 	void _bad_transition(int state) {
@@ -210,6 +228,9 @@ public:
 	string type_name = "code breakpoint";
 	
 	CodeBreakpoint(void *address, BOOL condition, bpcallback action) : Breakpoint(address, condition, action) {
+	}
+
+	CodeBreakpoint(void* address, BOOL condition, Hook *action) : Breakpoint(address, condition, action) {
 	}
 	
 	void __set_bp(Process *p) {

@@ -70,7 +70,6 @@ class Debug  {
 protected:
 	int pid;  // debugged pid
 	BOOL debugging;
-	System *sys;
 	Event *last_event = NULL;
 	vector<Event *> events;
 	Process *process; // debugged process
@@ -108,6 +107,9 @@ protected:
 	bool _debug_static_init = false;
 
 public:
+	System* sys;
+
+
 	Debug() {
 		sys = new System();
 		debugging = FALSE;
@@ -205,6 +207,7 @@ public:
 				Process *proc = new Process(pinfo.dwProcessId);
 				proc->scan();
 				this->process = proc;
+				cout << "objeto proc pid: " << proc->get_pid() << endl;
 				return proc;
 			}
 			
@@ -216,11 +219,11 @@ public:
 			
 			hProcess = OpenProcess(PROCESS_QUERY_INFORMATION, FALSE, ppid);
 			OpenProcessToken(hProcess, 0, &token);
-			DuplicateToken(token, lvl, &token2);
+			DuplicateToken(token, SecurityImpersonation, &token2);
 			
 			CloseHandle(token);
 			CloseHandle(hProcess);
-			CreateProcessAsUser(token2, file.c_str(), (LPSTR)cmdline.c_str(), &sec_proc, &sec_thread, inherit_handles, flags, env, dir.c_str(), &startinfo, &pinfo);
+			CreateProcessAsUserA(token2, (LPCSTR)file.c_str(), (LPSTR)cmdline.c_str(), &sec_proc, &sec_thread, inherit_handles, flags, env, dir.c_str(), &startinfo, &pinfo);
 			sys->set_kill_on_exit_mode(TRUE);
 			this->kill_on_exit = TRUE;
 			this->pid = pinfo.dwProcessId;
@@ -233,6 +236,10 @@ public:
 		}
 		
 		return NULL;
+	}
+
+	Process *get_process() {
+		return process;
 	}
 	
 	void _cleanup_process() {
@@ -279,7 +286,7 @@ public:
 		DEBUG_EVENT ev;
 		WaitForDebugEvent(&ev, millis);
 		
-		Event *event = new Event(this->process, ev); //TODO: use event factory?
+		Event *event = new Event(this->process, ev, this); //TODO: use event factory?
 		events.push_back(event);
 		last_event = event;
 		return event;
@@ -289,7 +296,7 @@ public:
 		DEBUG_EVENT ev;
 		WaitForDebugEvent(&ev, INFINITE);
 		
-		Event *event = new Event(this->process, ev);
+		Event *event = new Event(this->process, ev, this);
 		events.push_back(event);
 		last_event = event;
 		return event;
@@ -321,31 +328,39 @@ public:
 			event = last_event;
 		}
 		
+		event->print();
+		
 		switch(event->get_event_code()) {
 			case EXCEPTION_DEBUG_EVENT:
+				cout << "is an exception " << endl;
 				switch(event->get_exception_code()) {
 					case EXCEPTION_BREAKPOINT:
                     case EXCEPTION_WX86_BREAKPOINT:
                     case EXCEPTION_SINGLE_STEP:
                     case EXCEPTION_GUARD_PAGE:
+                    	cout << "ex type 1" << endl;
                     	event->set_continue_status(DBG_CONTINUE);
                     	break;
                     case EXCEPTION_INVALID_HANDLE:
+                    	cout << "ex type 2" << endl;
                     	if (hostile_mode)
                     		event->set_continue_status(DBG_EXCEPTION_NOT_HANDLED);
                     	break;
                     		event->set_continue_status(DBG_CONTINUE);
                     default:
+                    	cout << "ex other type" << endl;
                     	event->set_continue_status(DBG_EXCEPTION_NOT_HANDLED);
 				}
 				break;
 				
 			case RIP_EVENT:
+				cout << "rip evet" << endl;
 				if (event->get_rip_type() == SLE_ERROR)
 					event->set_continue_status(DBG_TERMINATE_PROCESS);
 				break;
 				
 			default:
+				cout << "other event lets continue" << endl;
 				event->set_continue_status(DBG_CONTINUE);
 				break;
 				
@@ -468,14 +483,17 @@ public:
 	
 	static bool _notify_create_process(Event *event) {
 		//TODO: implement
+		return true;
 	}
 	
 	static bool disable_process_breakpoints(int pid) {
 		//TODO: implement
+		return true;
 	}
 	
 	static bool disable_thread_breakpoints(int tid) {
 		//TODO: implement
+		return true;
 	}
 	
 	void kill_all() {
@@ -493,7 +511,7 @@ public:
 	
 	//// bp cointainer ////
 
-protected:
+//protected:
     Box<CodeBreakpoint *> code_bp;
     Box<PageBreakpoint *> page_bp;
     Box<HardwareBreakpoint *> hardware_bp;
@@ -501,7 +519,7 @@ protected:
     vector<DWORD> tracing;
     Box<Breakpoint *> deferred_bp;
     
-         
+	
     void __del_running_bp_from_all_threads(Breakpoint *bp) {
     	for (auto tid : running_bp.get_keys()) {
     		if (running_bp.contains(tid, bp)) {
@@ -621,6 +639,23 @@ public:
 		
 		return bp;
 	}
+
+	CodeBreakpoint* define_code_breakpoint_hook(int pid, void* address, BOOL condition, Hook *action) {
+		CodeBreakpoint* bp = new CodeBreakpoint(address, condition, action);
+		bp->set_pid(pid);
+
+		if (code_bp.contains(pid, bp)) {
+			cout << "already exists the code breakpoint " << endl;
+			delete bp;
+			return NULL;
+		}
+
+		code_bp.insert(pid, bp);
+
+		return bp;
+	}
+
+
 	
 	PageBreakpoint *define_page_breakpoint(int pid, void *address, int pages, BOOL condition, bpcallback action) {
 		PageBreakpoint *bp = new PageBreakpoint(address, pages, condition, action);
@@ -1213,14 +1248,17 @@ public:
 	void pre_event_notify_callback(DWORD type, Event *ev) {
 		switch(type) {
 			case CREATE_THREAD_DEBUG_EVENT:
+				cout << "create thread event" << endl;
 				_notify_exit_thread(ev);
 				break;
 
 			case CREATE_PROCESS_DEBUG_EVENT:
+				cout << "create process debug" << endl;
 				_notify_create_process(ev);
 				break;
 				
 			case LOAD_DLL_DEBUG_EVENT:
+				cout << "load dll event" << endl;
 				_notify_load_dll(ev);
 				break;
 		}
@@ -1521,17 +1559,22 @@ public:
 		
 		auto ev_code = ev->get_event_code();
 		
+		cout << "dispatch" << endl;
 		
 		if (ev_code == EXCEPTION_DEBUG_EVENT) {
+			cout << "is exception" << endl;
 			auto ex_code = ev->get_exception_code();
 			//TODO: control that ex_code is in the keys
 			pre_exception_notify_callback(ex_code, (ExceptionEvent *)ev);
 			//post_exception_nofity_callback(ex_code, (ExceptionEvent *)ev); 
 			
 		} else {
+			cout << "is not ex" << endl;
 			pre_event_notify_callback(ev_code, ev);
 			//post_event_nofity_callback(ev_code, ev);
 		}
+		
+		cout << "end dispatch" << endl;
 		
 		return ret;
 	}
@@ -1543,12 +1586,21 @@ public:
 	bool _notify_load_dll(Event *ev) {
 		bool bCallHandler;
 		
+		cout << "notify load dll 1" << endl;
 		bCallHandler = bpc_notify_load_dll(ev);
 		auto proc = ev->get_process();
 		
+		cout << "notify load dll 2" << endl;
 		bCallHandler = (proc_notify_load_dll((LoadDLLEvent *)ev) && bCallHandler);
+		cout << "notify load dll 3" << endl;
+
+		this->eh->load_dll();
+
+		
 		
 		if (is_hostile_mode()) {
+			cout << "is hostile" << endl;
+			
 			auto mod = ev->get_module();
 			if (mod->match_name("ntdll.dll")) {
 				
@@ -1560,16 +1612,20 @@ public:
 	}
 	
 	bool proc_notify_load_dll(LoadDLLEvent *ev) {
+	
 		auto proc = ev->get_process();
 		auto base = ev->get_module_base();
 		FileHandle *hFile = ev->get_file_handle();
 		auto filename = ev->get_filename();
+
 		
 		if (!proc->has_module_by_base(base)) {
+			cout << "dont have module" << endl;
 			auto mod = new Module(base, hFile, filename, ev->get_pid());
 			proc->__add_module(mod);
 
 		} else {			
+			cout << "have module" << endl;
 			auto mod = proc->get_module_by_base(base);
 			
 			if (mod->get_file_handle() == NULL)
@@ -1629,11 +1685,59 @@ public:
 		
 		return cbp;
 	}
-	
-	bool break_at(DWORD pid, void *address, callback action) {
+
+	CodeBreakpoint* __set_break_hook(DWORD pid, void* addr, Hook *action, bool one_shot) {
+
+		CodeBreakpoint* cbp;
+
+		if (code_bp.contains(pid, addr)) {
+			cbp = code_bp.get_item_by_address(pid, addr);
+			if (cbp->get_hook_action() != action) {
+				cbp->set_hook_action(action);
+				cout << "redefined code breakpoint at " << hex << addr << " pid: " << pid << endl;
+			}
+		}
+		else {
+			cbp = define_code_breakpoint_hook(pid, addr, true, action);
+		}
+
+		if (one_shot) {
+			if (!cbp->is_one_shot()) {
+				enable_one_shot_code_breakpoint(pid, addr);
+			}
+		}
+		else {
+			if (!cbp->is_one_shot()) {
+				enable_code_breakpoint(pid, addr);
+			}
+		}
+
+		return cbp;
+	}
+
+
+	// what if address is a string? duplicate methods?
+
+	void __clear_break(DWORD pid, void* address) {
+		if (has_code_breakpoint(pid, address)) {
+			erase_code_breakpoint(pid, address);
+		}
+	}
+
+	bool break_at(DWORD pid, void* address, callback action) {
 		auto bp = __set_break(pid, address, action, false);
 		return (bp != NULL);
 	}
+
+	bool break_at(DWORD pid, void* address, Hook* action) {
+		auto bp = __set_break_hook(pid, address, action, false);
+		return (bp != NULL);
+	}
+
+	void dont_break_at(DWORD pid, void *address) {
+		__clear_break(pid, address);
+	}
+	
 
 
 	

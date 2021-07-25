@@ -46,7 +46,7 @@ const DWORD auxiliary   = 0x10;
 const DWORD parity      = 0x4;
 const DWORD carry       = 0x1;
 
-
+//enum THREADINFOCLASS { ThreadHideFromDebugger = 0x11 };
 
 //// THREAD ////
 
@@ -338,18 +338,23 @@ public:
 		clear_flags(carry);
 	}
 	
+	
+
 	BOOL is_hidden() {
 		BOOL check = FALSE;
 		ULONG len;
-		
-		NtQueryInformationThread(hThread, ThreadHideFromDebugger, &check, sizeof(ULONG), &len);
+		THREADINFOCLASS cls;
+		NtQueryInformationThread(hThread, cls, &check, sizeof(ULONG), &len);
 		return check;
 	}
-	
+
+
+
 	THREAD_BASIC_INFORMATION get_tbi() {
 		THREAD_BASIC_INFORMATION tbi = {0};
-		
-		NtQueryInformationThread(hThread, ThreadBasicInformation, &tbi, sizeof(tbi), NULL);
+		THREADINFOCLASS cls;
+
+		NtQueryInformationThread(hThread, cls /*ThreadBasicInformation*/, &tbi, sizeof(tbi), NULL);
 		return tbi;
 	}
 	

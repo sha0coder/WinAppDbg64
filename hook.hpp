@@ -36,16 +36,17 @@ public:
 		this->post_cb = post_cb;
 	}
 	
-	void call(Event *ev) {		
+	bool call(Event *ev) {		
 		try {
 			__call_handler(pre_cb, ev);
+			return true;
 		} catch(...) {
 			cout << "call handler crashed" << endl;
+			return false;
 		}
 	}
-	/*
 	
-	TODO: this has to be done from debugger.
+	
 	
 	void __post_call_action_hwbp(Debug *debug, Event *ev) {
 		debug->erase_hardware_breakpoint(ev->get_tid(), ev->get_address()); //TODO: breakpoint is protected?
@@ -55,14 +56,14 @@ public:
 		}
 	}
 	
-	void __post_call_action_codebp(Event *ev) {
-		ev->debug->dont_break_at(ev->get_pid(), ev->breakpoint->get_address());
+	void __post_call_action_codebp(Debug *dbg, Event *ev) {
+		dbg->dont_break_at(ev->get_pid(), ev->breakpoint->get_address());
 		try {
 			__post_call_action(ev);
 		} catch(...) {
 		}
 	}
-	*/
+	
 	
 	void __post_call_action(Event *ev) {
 		auto thread = ev->get_thread();
@@ -78,16 +79,14 @@ public:
 			cb(ev);
 		}
 	}
-	
-	
-	//TODO: debugger has to implement this:
-	/*void hook(Debug *debug, DWORD pid, void *address) {
-		debug->break_at(pid, address, this);
+
+	void hook(Debug *dbg, DWORD pid, void *address) {
+		dbg->break_at(pid, address, this);
 	}
 	
-	void unhook(Debug *debug, DWORD pid, void *address) {
-		debug->dont_break_at(pid, address);
-	}*/
+	void unhook(Debug *dbg, DWORD pid, void *address) {
+		dbg->dont_break_at(pid, address);
+	}
 	
 
 	
@@ -161,16 +160,14 @@ public:
 		return ss.str();
 	}
 	
-	/*
-	TODO: this can not be done from here, has to be done from debug
-	void do_hook(Debug *debug, DWORD pid) {
-		get_hook(pid)->do_hook(debug, pid, get_label());
+	void do_hook(Debug *dbg, DWORD pid) {
+		get_hook(pid)->hook(dbg, pid, get_label());
 	}
 	
-	void do_unhook(Debug *debug, DWORD pid) {
-		get_hook(pid)->do_unhook(debug, pid, get_label());
+	void do_unhook(Debug *dbg, DWORD pid) {
+		get_hook(pid)->unhook(dbg, pid, get_label());
 	}
-	*/
+	
 	
 }; // end ApiHook
 
@@ -187,9 +184,53 @@ public:
 	EventHandler() {
 		api_hooks.clear();
 	}
+
 	~EventHandler() {
 		api_hooks.clear();
 	}
+
+	vector<ApiHook*> __get_hooks_for_dll(Event *ev) {
+		vector<ApiHook*> result;
+		SuperString module_filepath(ev->get_module()->get_filename());
+		if (!module_filepath.empty()) {
+			auto spl = module_filepath.split('\\');
+			auto module = spl[spl.size() - 1];
+			for (auto apihook : api_hooks.get_items(module)) {
+				result.push_back(apihook);
+			}
+		}
+
+		return result;
+	}
+
+	void __hook_dll(Event *ev) {
+		auto dbg = ev->get_debug();
+		auto pid = ev->get_pid();
+		for (auto apihook : __get_hooks_for_dll(ev)) {
+			apihook->do_hook(dbg, pid);
+		}
+	}
+
+	void __unhook_dll(Event *ev) {
+		auto dbg = ev->get_debug();
+		auto pid = ev->get_pid();
+		for (auto apihook : __get_hooks_for_dll(ev)) {
+			apihook->do_unhook(dbg, pid);
+		}
+	}
+
+	void call(Event *ev) {
+		auto code = ev->get_event_code();
+		if (code == LOAD_DLL_DEBUG_EVENT) {
+			__hook_dll(ev);
+		}
+		else if (code == UNLOAD_DLL_DEBUG_EVENT) {
+			__unhook_dll(ev);
+		}
+	}
+
+
+
 	
 	
 	//TODO: destructor deleting hook objects

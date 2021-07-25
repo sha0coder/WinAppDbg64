@@ -418,11 +418,11 @@ public:
 	}
 	
 	size_t length() {
-		this->s.length();
+		return this->s.length();
 	}
 	
 	size_t size() {
-		this->s.size();
+		return this->s.size();
 	}
 	
 	bool empty() {

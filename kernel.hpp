@@ -143,7 +143,7 @@ public:
 	}
 	
 }; // end Handle
-
+/*
 typedef enum _FILE_INFO_BY_HANDLE_CLASS {
   FileBasicInfo,
   FileStandardInfo,
@@ -172,9 +172,9 @@ typedef enum _FILE_INFO_BY_HANDLE_CLASS {
   FileNormalizedNameInfo,
   MaximumFileInfoByHandleClass
 } FILE_INFO_BY_HANDLE_CLASS, *PFILE_INFO_BY_HANDLE_CLASS;
+*/
 
-
-typedef bool (*GetFileInformationByHandleEx)(HANDLE, FILE_INFO_BY_HANDLE_CLASS, LPVOID, DWORD);
+//typedef bool (*GetFileInformationByHandleEx)(HANDLE, FILE_INFO_BY_HANDLE_CLASS, LPVOID, DWORD);
 //typedef NTSTATUS (*NtQueryInformationFile)(HANDLE, PIO_STATUS_BLOCK, PVOID, ULONG, FILE_INFORMATION_CLASS);
 
 class FileHandle : public Handle {
@@ -189,8 +189,11 @@ public:
 		
 		try {
 			
-			GetFileInformationByHandleEx getinfo = (GetFileInformationByHandleEx)GetProcAddress(LoadLibraryA("kernel32.dll"), "GetFileInformationByHandleEx");
-			getinfo(value, FileNameInfo, name, 0x1004);
+			/*GetFileInformationByHandleEx getinfo;
+			getinfo = (GetFileInformationByHandleEx)GetProcAddress(LoadLibraryA("kernel32.dll"), "GetFileInformationByHandleEx");
+			getinfo(value, FileNameInfo, name, 0x1004);*/
+			//HANDLE value;
+			GetFileInformationByHandleEx(this->value, FileNameInfo, name, 0x1004);
 			
 			string str(name);
 			free(name);
