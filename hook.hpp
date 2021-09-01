@@ -28,26 +28,114 @@ protected:
 	bool use_hadware_breakpoints = false;
 	hcallback pre_cb = NULL;
 	hcallback post_cb = NULL;
-	map<DWORD, DWORD> param_stack;
-	
+	//map<DWORD, DWORD> param_stack;
+	/*
+	vector<DWORD> param_stack;
+	vector<DWORD> pre_cb_args; // which type is this?
+	vector<DWORD> post_cb_args; // which type is this?
+	*/
+	int param_count = 0;
+
 public:
+	Hook() {
+	}
+
 	Hook(hcallback pre_cb, hcallback post_cb) {
 		this->pre_cb = pre_cb;
 		this->post_cb = post_cb;
 	}
-	
-	bool call(Event *ev) {		
-		try {
-			__call_handler(pre_cb, ev);
-			return true;
-		} catch(...) {
-			cout << "call handler crashed" << endl;
-			return false;
+	/*
+	void set_pre_cb_args(vector<DWORD> pre_cb_args) {
+		this->pre_cb_args = pre_cb_args;
+	}
+
+	void set_post_cb_args(vector<DWORD> post_cb_args) {
+		this->post_cb_args = post_cb_args;
+	}*/
+
+	void set_param_count(int param_count) {
+		this->param_count = param_count;
+	}
+
+
+	void *_get_return_address(Process *proc, Thread *thread) {
+		return proc->read_pointer((void *)thread->get_sp());
+	}
+
+	DWORD64 _get_return_value(Thread* thread) {
+		CONTEXT ctx = thread->get_context();
+		return ctx.Rax;
+	}
+
+	vector<DWORD64> _get_function_arguments(Process *proc, Thread *thread) {
+		vector<DWORD64> args;
+		auto rsp = thread->get_sp();
+
+		for (int i = 0; i < param_count; i++) {
+			args.push_back(proc->read_long_long((void *)(rsp + (8 * i))));
 		}
+
+		return args;
+	}
+
+
+
+	
+
+
+	bool call(Event *ev) {
+		auto dbg = ev->get_debug();
+		auto pid = ev->get_pid();
+		auto tid = ev->get_tid();
+		auto proc = ev->get_process();
+		auto thread = ev->get_thread();
+
+		void *ra = _get_return_address(proc, thread);
+		auto params = _get_function_arguments(proc, thread);
+		
+		__push_params(tid, params);
+		bool bHookedReturn = false;
+
+		if (ra != NULL && post_cb != NULL) {
+			auto use_hardware_breakpoints = this->use_hadware_breakpoints;
+			if (use_hardware_breakpoints) {
+				try {
+					dbg->define_hardware_breakpoint(tid, ra, dbg->BP_BREAK_ON_EXECUTION, dbg->BP_WATCH_BYTE, true, this->__postCallAction_hwbp);
+					dbg->enable_one_shot_hardware_breakpoint(tid, ra);
+					bHookedReturn = true;
+				}
+				catch (...) {
+					use_hardware_breakpoints = false;
+					cout << "failed to set a hardware breakpoint at return address " << ra << " for thread id " << tid << endl;
+				}
+			}
+
+			if (!use_hardware_breakpoints) {
+				try {
+					dbg->break_at(pid, ra, this->__postCallAction_codebp);
+					bHookedReturn = true;
+				}
+				catch (...) {
+					cout << "failed to set a code breakpoint at return address " << ra << " for thread id " << tid << endl;
+				}
+			}
+		}
+
+		if (this->pre_cb_args.empty()) {
+			this->__callHandler(pre_cb, ev, ra, pre_cb_args, params);
+		}
+		else {
+			this->__callHandler(pre_cb, ev, ra, params);
+		}
+
+		if (!bHookedReturn) {
+			this->__pop_params(tid);
+		}
+
 	}
 	
 	
-	
+	/*
 	void __post_call_action_hwbp(Debug *debug, Event *ev) {
 		debug->erase_hardware_breakpoint(ev->get_tid(), ev->get_address()); //TODO: breakpoint is protected?
 		try {
@@ -78,14 +166,22 @@ public:
 			//ev->set_hook(this);
 			cb(ev);
 		}
-	}
+	}*/
 
 	void hook(Debug *dbg, DWORD pid, void *address) {
 		dbg->break_at(pid, address, this);
 	}
+
+	void hook(Debug* dbg, DWORD pid, string label) {
+		dbg->break_at_label(pid, label, this);
+	}
 	
 	void unhook(Debug *dbg, DWORD pid, void *address) {
 		dbg->dont_break_at(pid, address);
+	}
+
+	void unhook(Debug* dbg, DWORD pid, string label) {
+		dbg->dont_break_at_label(pid, label);
 	}
 	
 
@@ -159,6 +255,8 @@ public:
 		ss << mod_name << "!" << api_name;
 		return ss.str();
 	}
+
+
 	
 	void do_hook(Debug *dbg, DWORD pid) {
 		get_hook(pid)->hook(dbg, pid, get_label());
@@ -219,6 +317,9 @@ public:
 		}
 	}
 
+	virtual void create_thread(CreateThreadEvent *ev) {}
+	virtual void load_dll(LoadDLLEvent *ev) {}
+
 	void call(Event *ev) {
 		auto code = ev->get_event_code();
 		if (code == LOAD_DLL_DEBUG_EVENT) {
@@ -226,6 +327,16 @@ public:
 		}
 		else if (code == UNLOAD_DLL_DEBUG_EVENT) {
 			__unhook_dll(ev);
+		}
+
+		string method = ev->event_method;
+
+		if (method == "create_thread") {
+			this->create_thread((CreateThreadEvent *)ev);
+		}
+
+		if (method == "load_dll") {
+			this->load_dll((LoadDLLEvent *)ev);
 		}
 	}
 

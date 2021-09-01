@@ -31,6 +31,7 @@ protected:
 	BOOL condition;
 	DWORD pid = 0;
 	DWORD tid = 0;
+	string label = "";
 	
 public:
 	static const int DISABLED = 0;
@@ -74,6 +75,14 @@ public:
 	
 	void set_tid(DWORD tid) {
 		this->tid = tid;
+	}
+
+	string get_label() {
+		return label;
+	}
+
+	void set_label(string lbl) {
+		label = lbl;
 	}
 	
 	bpcallback get_action() {

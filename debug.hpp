@@ -1538,7 +1538,7 @@ public:
 		
 		if (code == EXCEPTION_DEBUG_EVENT) {
 			try {
-				method = eh->exception;				
+				method = eh->exception;
 			} catch(...) {
 				method = cb;
 			}
@@ -1594,7 +1594,7 @@ public:
 		bCallHandler = (proc_notify_load_dll((LoadDLLEvent *)ev) && bCallHandler);
 		cout << "notify load dll 3" << endl;
 
-		this->eh->load_dll();
+
 
 		
 		
@@ -1603,8 +1603,7 @@ public:
 			
 			auto mod = ev->get_module();
 			if (mod->match_name("ntdll.dll")) {
-				
-				break_at(proc->get_pid(), proc->resolve_label("ntdll!DbgUiRemoteBreakin"), NULL);
+				break_at(proc->get_pid(), proc->resolve_label("ntdll!DbgUiRemoteBreakin"), (Hook *)NULL);
 			}	
 		}
 		
@@ -1734,8 +1733,42 @@ public:
 		return (bp != NULL);
 	}
 
+	void *resolve_label(DWORD pid, string label) {
+		Process* proc = sys->get_process(pid);
+		void* addr = NULL;
+
+		if (proc) {
+			addr = proc->resolve_label(label);
+		}
+		else {
+			for (auto deferred : deferred_bp.get_items(pid)) {
+				if (deferred->get_label() == label) {
+					addr = deferred->get_address();
+					break;
+				}
+			}
+		}
+
+		return addr;
+	}
+
+	bool break_at_label(DWORD pid, string label, Hook* action) {
+		void *addr = resolve_label(pid, label);
+
+		if (addr != NULL)
+			return break_at(pid, addr, action);
+		return false;
+	}
+
 	void dont_break_at(DWORD pid, void *address) {
 		__clear_break(pid, address);
+	}
+
+	void dont_break_at_label(DWORD pid, string label) {
+		void *addr = resolve_label(pid, label);
+
+		if (addr != NULL)
+			dont_break_at(pid, addr);
 	}
 	
 

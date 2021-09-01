@@ -41,7 +41,7 @@ protected:
 	Debug* dbg;
 
 public:
-	
+	string event_method = "";
 	
 	Event(DEBUG_EVENT ev, Debug *dbg) {
 		this->ev = ev;
